@@ -1,0 +1,8 @@
+{
+  "description": "Add your keys here",
+  "keys": {
+    "readKey": "R-*-*",
+    "writeKey": "W-*-*",
+    "adminKey": "A-*-*"
+  }
+}

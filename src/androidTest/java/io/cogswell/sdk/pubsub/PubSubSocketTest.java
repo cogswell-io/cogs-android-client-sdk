@@ -19,10 +19,12 @@ import junit.framework.TestCase;
 
 import org.json.JSONObject;
 
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Scanner;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -38,20 +40,40 @@ public class PubSubSocketTest extends TestCase {
     private Executor executor = MoreExecutors.directExecutor();
     private static int asyncTimeoutSeconds = 30;
 
-    List<String> keys = new ArrayList<String>();
-    {
-        keys.add("A-*-*");
-        keys.add("R-*-*");
-        keys.add("W-*-*");
+    private List<String> keys = new ArrayList<String>();
+    private String host = null;
+
+    @Override
+    protected void setUp() throws Exception {
+        InputStream jsonConfigIS = this.getClass().getResourceAsStream("config.json");
+        String configJsonString = new Scanner(jsonConfigIS, "UTF-8").useDelimiter("\\A").next();
+
+        JSONObject configJson = new JSONObject(configJsonString);
+
+        // Get the host.
+        host = configJson.optString("host", null);
+
+        // Add the keys
+        JSONObject keysJson = configJson.getJSONObject("keys");
+        String rKey = keysJson.optString("readKey", null);
+        if (rKey != null) {
+            keys.add(rKey);
+        }
+        String wKey = keysJson.optString("writeKey", null);
+        if (wKey != null) {
+            keys.add(wKey);
+        }
+        String aKey = keysJson.optString("adminKey", null);
+        if (aKey != null) {
+            keys.add(aKey);
+        }
     }
 
     public void testConnect() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
-
         final CountDownLatch signal = new CountDownLatch(1);
-        Object result = null;
 
-        ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, new PubSubOptions("https://gamqa-api.aviatainc.com/pubsub"));
+        ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, new PubSubOptions(host));
 
         assertNotNull(connectFuture);
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -80,13 +102,11 @@ public class PubSubSocketTest extends TestCase {
                 .put("seq", seqNum)
                 .put("action", "session-uuid");
 
-        //testHandle.getSessionUuid()
-        ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, new PubSubOptions("https://gamqa-api.aviatainc.com/pubsub"));
+        ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, new PubSubOptions(host));
         AsyncFunction<PubSubSocket, JSONObject> getSessionFunction =
                 new AsyncFunction<PubSubSocket, JSONObject>() {
                     public ListenableFuture<JSONObject> apply(PubSubSocket pubsubSocket) {
                         responses.put("pubsubSocket", pubsubSocket);
-                        //return null;
                         return pubsubSocket.sendRequest(seqNum, getSessionRequest, true, null);
                     }
                 };
@@ -141,7 +161,7 @@ public class PubSubSocketTest extends TestCase {
             }
         };
 
-        PubSubOptions pubSubOptions = new PubSubOptions("https://gamqa-api.aviatainc.com/pubsub", true, 30000L, null);
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, 30000L, null);
         ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, pubSubOptions);
 
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -205,7 +225,7 @@ public class PubSubSocketTest extends TestCase {
             }
         };
 
-        PubSubOptions pubSubOptions = new PubSubOptions("https://gamqa-api.aviatainc.com/pubsub", true, 30000L, null);
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, 30000L, null);
         ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, pubSubOptions);
 
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -237,6 +257,7 @@ public class PubSubSocketTest extends TestCase {
         signalReconnected.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
 
         assertEquals(true, responses.get("onReconnect"));
+
         // The client uuid before the reset (pubsubSocket.sessionUuid) should not match the client uuid after the reset (onNewSession)
         assertTrue(!responses.get("pubsubSocket.sessionUuid").equals(responses.get("onNewSession")));
     }
@@ -246,10 +267,9 @@ public class PubSubSocketTest extends TestCase {
         final Map<String,Object> responses = new HashMap<String, Object>();
 
         final CountDownLatch signal = new CountDownLatch(1);
-        Object result = null;
         long pingIntervalSeconds = 30*2;
 
-        ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, new PubSubOptions("https://gamqa-api.aviatainc.com/pubsub"));
+        ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, new PubSubOptions(host));
 
         assertNotNull(connectFuture);
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -257,7 +277,7 @@ public class PubSubSocketTest extends TestCase {
                 pubsubSocket.setKeepAliveHandler(new Runnable() {
                     @Override
                     public void run() {
-                        Log.d("TEST", "keepAliveHearbeat: ping");
+
                         // Only trigger the count down latch after we've pinged the server.
                         responses.put("keepAliveHandler", true);
                         signal.countDown();
