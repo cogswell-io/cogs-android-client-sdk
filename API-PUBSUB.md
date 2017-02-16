@@ -27,7 +27,7 @@ errors, see the documentation at [the Cogswell.ioPub/Sub website](https://cogswe
 
 To support versions of Android as old as API level 15, this SDK uses the [Guava](https://github/google/guava) library for async calls.
 
-A complete example, illustrating how the methods can be used
+[A complete example](#a-complete-example), illustrating how the methods can be used
 together, is provided at the end of this document.
 
 ### [`PubSubSDK`](#pubsubsdk)
