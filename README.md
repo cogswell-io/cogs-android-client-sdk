@@ -8,7 +8,7 @@ The Android SDK for the Cogs real-time message brokering system for Publishing a
 * Android Studio 1.5.0
 * CEP requires a GCM enabled application. You can read more about GCM [here](https://developers.google.com/cloud-messaging/)
 
-# Cogswell Java SDK
+# Cogswell Andorid SDK
 This page details general information on the Cogswell Android SDK. For specific example code, see:
 * [Pub/Sub Code Samples](API-PUBSUB.md)
 * [CEP Code Samples](API-CEP.md)
