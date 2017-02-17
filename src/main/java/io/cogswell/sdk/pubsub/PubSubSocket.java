@@ -461,6 +461,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
         }
     }
 
+    // TODO: complete, fix, or remove the following
     /*
     @Override
     public void onOpen(Session session, EndpointConfig config) {
@@ -556,7 +557,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
             rawRecordHandler.onRawRecord(message);
         }
 
-        // TODO: validate format of message received from server, if invalid call error
+        // TODO: [PUB-316] validate format of message received from server, if invalid call error
 
         try {
             JSONObject json = new JSONObject(message);
@@ -579,6 +580,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                 // This should never happen.  Log it and send to the handler, if specified.
                 PubSubException error = new PubSubException("Expected sequence number missing: "+message);
                 Log.e("Cogs-SDK","Expected sequence number missing.", error);
+
                 if (responseErrorHandler!=null) {
                     responseErrorHandler.onError(error, null, null);
                 }
@@ -593,6 +595,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                     } else {
                         responseFuture.set(json);
                     }
+
                     outstanding.invalidate(seq);
                 } else {
                     // All responses with a seq should have a future waiting for it.
@@ -601,9 +604,11 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
 
                 // Notify the error handler if the server Resolve a promise if there is a future waiting for a response.
                 PubSubErrorHandler errorHandler = publishErrorHandlers.getIfPresent(seq);
+
                 if (errorHandler != null) {
                     JSONObject request = publishErrorHandlerRequests.getIfPresent(seq);
                     String channel = null;
+
                     if (request != null) {
                         try {
                             channel = request.getString("chan");
@@ -612,15 +617,16 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                             channel = null;
                         }
                     }
+
                     errorHandler.onError(new Throwable(message), seq, channel);
                 }
-
             }
         } catch (JSONException e) {
             // This should never happen.  Log it and send to the handler, if specified.
             PubSubException error = new PubSubException("Could not parse response from server: "+message, e);
             Log.e("Cogs-SDK","Could not parse response from server.", error);
-            if (responseErrorHandler!=null) {
+
+            if (errorHandler!=null) {
                 responseErrorHandler.onError(error, null, null);
             }
         }
@@ -641,7 +647,6 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     protected UUID getSessionUuid() {
         return sessionUuid;
     }
-
 
     /**
      * Handler called when keep-alive pings are sent.  This is protected for testing.
@@ -724,4 +729,10 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
         msgHandlers.remove(channel);
     }
 
+    /**
+     * Dissacociates all {@link PubSubMessageHandler message handlers}, if any, from this socket.
+     */
+    public void removeAllMessageHandlers() {
+        msgHandlers.clear();
+    }
 }
