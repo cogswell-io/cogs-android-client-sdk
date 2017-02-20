@@ -47,13 +47,18 @@ public class PubSubHandle {
     /**
      * Send a message with the specified params and process the JSON response with the specified reader.
      * A sequence number will be added to the request.  Any errors will resolve the Future with an exception.
+     *
      * @param jsonreader converts a JSONObject to an instance of the specified type.
      * @param nameValuePairs Must follow the pattern of a string name followed by a value (String, Object, String, Object, ...)
      * @param isAwaitingServerResponse If true, this call will be registered to resolve when the server responds.  Otherwise it will resolve immediatly with a sequence number.
      * @param <T> The expected result type.
+     *
      * @return A future with the result of a call to jsonreader.
      */
-    private <T> ListenableFuture<T> sendJSON(final JSONReaderFunction<T> jsonreader, final boolean isAwaitingServerResponse, final PubSubErrorHandler serverErrorHandler, Object ... nameValuePairs) {
+    private <T> ListenableFuture<T> sendJSON(
+            final JSONReaderFunction<T> jsonreader, final boolean isAwaitingServerResponse,
+            final PubSubErrorHandler serverErrorHandler, Object ... nameValuePairs
+    ) {
         final SettableFuture<T> outcome = SettableFuture.create();
         long seq = sequence.getAndIncrement();
 
@@ -86,6 +91,7 @@ public class PubSubHandle {
             // Reject the future if there are any errors.
             outcome.setException(e);
         }
+
         return outcome;
     }
 
@@ -94,7 +100,6 @@ public class PubSubHandle {
      * @return ListenableFuture<UUID> Future that completes with Session UUID on success, and with error otherwise
      */
     public ListenableFuture<UUID> getSessionUuid() {
-
         return sendJSON(new JSONReaderFunction<UUID>() {
             @Override
             public UUID apply(JSONObject json) throws JSONException {
@@ -165,6 +170,9 @@ public class PubSubHandle {
                 for(int i = 0; i < list.length(); ++i) {
                     channels.add(list.getString(i));
                 }
+
+                socket.removeAllMessageHandlers();
+
                 return channels;
             }
         }, true, null, "action", "unsubscribe-all");
@@ -184,33 +192,45 @@ public class PubSubHandle {
                 for(int i = 0; i < list.length(); ++i) {
                     channels.add(list.getString(i));
                 }
+
                 return channels;
             }
         }, true, null, "action", "subscriptions");
     }
 
     /**
-     * Publishes {@code message} to {@code channel} without acknowledgement that the message was actually published.
-     * Note: Completion of the returned CompletableFuture indicates success only in sending the message.
-     *       This method gives no information and no guarantees that the message was actually published.
+     * Publishes {@code message} to {@code channel} without acknowledgement that the message was
+     * actually published.
+     *
+     * Note: Completion of the returned CompletableFuture indicates success only in delivery of the
+     * message to the server. This method gives no information and no guarantees that the message
+     * was actually published by the server.
      *
      * @param channel Name of the channel on which to publish the message.
      * @param message Content of the message to be publish on the given channel.
-     * @return ListenableFuture<Long> Completes with the sequence number of the request on a successful send.
+     *
+     * @return ListenableFuture<Long> Completes with the sequence number of the request on a
+     * successful send.
      */
     public ListenableFuture<Long> publish(String channel, String message) {
         return publish(channel, message, null);
     }
 
     /**
-     * Publishes {@code message} to {@code channel} without acknowledgement that the message was actually published.
-     * Note: Completion of the returned CompletableFuture indicates success only in sending the message.
-     *       This method gives no information and no guarantees that the message was actually published.
+     * Publishes {@code message} to {@code channel} without acknowledgement that the message was
+     * actually published.
+     *
+     * Note: Completion of the returned CompletableFuture indicates success only in delivery of the
+     * message to the server. This method gives no information and no guarantees that the message
+     * was actually published by the server.
      *
      * @param channel Name of the channel on which to publish the message.
      * @param message Content of the message to be publish on the given channel.
-     * @param handler Error handler called if the server reports an error within 30 seconds of sending.
-     * @return ListenableFuture<Long> Completes with the sequence number of the request on a successful send.
+     * @param handler Error handler called if the server reports an error within 30 seconds
+     *                of sending.
+     *
+     * @return ListenableFuture<Long> Completes with the sequence number of the request on a
+     * successful send.
      */
     public ListenableFuture<Long> publish(String channel, String message, PubSubErrorHandler handler) {
         return sendJSON(new JSONReaderFunction<Long>() {
@@ -223,10 +243,12 @@ public class PubSubHandle {
     }
 
     /**
-     * Publishes {@code message} to {@code channel} with acknowledgement that the message was actually published.
+     * Publishes {@code message} to {@code channel} with acknowledgement that the message was
+     * actually published by the server.
      *
      * @param channel Name of the channel on which to publish the message.
      * @param message Content of the message to be publish on the given channel.
+     *
      * @return ListenableFuture<Long> Completes with UUID of published message on success.
      */
     public ListenableFuture<UUID> publishWithAck(String channel, String message) {
@@ -241,27 +263,30 @@ public class PubSubHandle {
 
     /**
      * Closes the connection with Cogswell Pub/Sub and unsubscribes from all channels.
-     * @return ListenableFuture<List<String>> Completes with the list of channels that were unsubscribed to on success.
+     *
+     * @return ListenableFuture<List<String>> which, on success, completes with the list of channels
+     * from which the session was unsubscribed.
      */
     public ListenableFuture<List<String>> close() {
-
         ListenableFuture<List<String>> unsubscribeAllFuture = unsubscribeAll();
-        Function<List<String>, List<String>> closeFunction =
-                new Function<List<String>, List<String>>() {
-                    public List<String> apply(List<String> unsubscribeAllResponse) {
-                        socket.close();
-                        return unsubscribeAllResponse;
-                    }
-                };
+
+        Function<List<String>, List<String>> closeFunction = new Function<List<String>, List<String>>() {
+            public List<String> apply(List<String> unsubscribeAllResponse) {
+                socket.close();
+                return unsubscribeAllResponse;
+            }
+        };
+
         ListenableFuture<List<String>> closedFuture = Futures.transform(unsubscribeAllFuture, closeFunction);
 
         return closedFuture;
     }
 
     /**
-     * Drop the underying socket.  If auto-reconnect is enabled, the underlying socked will be replaced.
+     * Drop the underlying socket.  If auto-reconnect is enabled, the underlying socked will
+     * be replaced.
      */
-    protected void dropConnection() {
+    protected void dropConnection(/* TODO: [PUB-312] add options */) {
         // Force an unplanned closing.
         socket.onCompleted(new Exception());
     }
@@ -310,6 +335,8 @@ public class PubSubHandle {
     public void onError(PubSubErrorHandler errorHandler) {
         socket.setErrorHandler(errorHandler);
     }
+
+    // TODO: [PUB-318] add the onErrorResponse() method
 
     /**
      * Registers a handler that is called whenever reconnecting the underlying connection to Cogswell Pub/Sub forces a new session

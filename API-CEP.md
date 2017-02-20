@@ -1,4 +1,4 @@
-# Cogswell CEP SDK
+# Cogswell CEP Andorid SDK
 
 The code examples that follow illustrate the individual methods of the Android
 Cogswell CEP SDK. The examples illustrate only how the methods might be

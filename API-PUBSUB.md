@@ -39,7 +39,7 @@ PubSubSDK sdk = PubSubSDK.getInstance();
 ```
 
 #### [`connect (keys)`](#connect-keys)
-You'll need to get your the from your Cogswell.io pub/sub account.
+You'll need to get your keys from your Cogswell.io pub/sub account.
 ```java
 List<String> keys = new ArrayList<String>();
 keys.add("A-*-*");
