@@ -41,8 +41,7 @@ public class PubSubHandle {
     }
 
     private interface JSONReaderFunction<T> {
-        T apply(JSONObject json) throws JSONException;
-    };
+        T apply(JSONObject json) throws JSONException;    };
 
     /**
      * Send a message with the specified params and process the JSON response with the specified reader.
@@ -285,10 +284,10 @@ public class PubSubHandle {
     /**
      * Drop the underlying socket.  If auto-reconnect is enabled, the underlying socked will
      * be replaced.
+     * @param options Options to fine-tune the effect of dropping the connection
      */
-    protected void dropConnection(/* TODO: [PUB-312] add options */) {
-        // Force an unplanned closing.
-        socket.onCompleted(new Exception());
+    public void dropConnection(PubSubDropConnectionOptions options) {
+        socket.dropConnection(options);
     }
 
     /**

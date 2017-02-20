@@ -335,6 +335,21 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     }
 
     /**
+     * Closes the underlying connection without preventing reconnects (Used for test purposes).
+     * @param options Options to fine-tune the effect of dropping the connection
+     */
+    protected void dropConnection(PubSubDropConnectionOptions dropOptions)
+    {
+        if(dropOptions != null) {
+            if (dropOptions.getReconnectDelay() < this.autoReconnectDelay.get()) {
+                autoReconnectDelay.set(dropOptions.getReconnectDelay());
+            }
+        }
+
+        webSocketSession.close();
+    }
+
+    /**
      * Initiates the connection the the Pub/Sub server with the configuration for this PubSubSocket.
      * @throws Auth.AuthKeyError if the auth was an invalid format.
      */

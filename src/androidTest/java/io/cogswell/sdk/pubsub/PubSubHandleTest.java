@@ -174,7 +174,6 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(((List<String>)responses.get("unsubscribeResponse")).size() == 0);
     }
 
-
     public void testListSubscriptions() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
         final CountDownLatch signal = new CountDownLatch(1);
@@ -226,7 +225,6 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(((List<String>)responses.get("listSubscriptionsResponse")).size() == 1);
         assertTrue(((List<String>)responses.get("listSubscriptionsResponse")).get(0).equals(testChannel));
     }
-
 
     public void testUnsubscribeAll() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
@@ -292,7 +290,6 @@ public class PubSubHandleTest extends TestCase {
         assertEquals(0, ((List<String>)responses.get("listSubscriptionsResponse")).size());
     }
 
-
     public void testSubscribeThenPublishWithoutAck() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
 
@@ -352,7 +349,6 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(responses.get("subscribeReceivedMessage") instanceof PubSubMessageRecord);
         assertEquals(testMessage, ((PubSubMessageRecord)responses.get("subscribeReceivedMessage")).getMessage());
     }
-
 
     public void testSubscribeThenPublishWithAck() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
@@ -506,7 +502,7 @@ public class PubSubHandleTest extends TestCase {
                     public List<String> apply(UUID getSessionUuidResponse) {
                         responses.put("getSessionUuidResponse", getSessionUuidResponse);
                         PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        pubsubHandle.dropConnection();
+                        pubsubHandle.dropConnection(new PubSubDropConnectionOptions(10));
                         return null;
                     }
                 };
