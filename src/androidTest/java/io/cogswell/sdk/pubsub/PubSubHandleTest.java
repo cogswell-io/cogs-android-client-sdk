@@ -25,6 +25,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
+import io.cogswell.sdk.utils.Duration;
 
 public class PubSubHandleTest extends TestCase {
     Object result = null;
@@ -502,7 +503,7 @@ public class PubSubHandleTest extends TestCase {
                     public List<String> apply(UUID getSessionUuidResponse) {
                         responses.put("getSessionUuidResponse", getSessionUuidResponse);
                         PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        pubsubHandle.dropConnection(new PubSubDropConnectionOptions(10));
+                        pubsubHandle.dropConnection(new PubSubDropConnectionOptions(Duration.of(10, TimeUnit.MILLISECONDS)));
                         return null;
                     }
                 };
@@ -512,7 +513,7 @@ public class PubSubHandleTest extends TestCase {
                 new AsyncFunction<List<String>, PubSubHandle>() {
                     public ListenableFuture<PubSubHandle> apply(List<String> subscribeResponse) {
                         UUID getSessionUuidResponse = (UUID) responses.get("getSessionUuidResponse");
-                        return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, 3000L, getSessionUuidResponse));
+                        return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, Duration.of(3, TimeUnit.SECONDS), getSessionUuidResponse));
                     }
                 };
         ListenableFuture<PubSubHandle> reconnectFuture = Futures.transformAsync(closeFuture, reconnectFunction, executor);

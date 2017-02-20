@@ -17,6 +17,7 @@ import com.koushikdutta.async.http.AsyncHttpRequest;
 import com.koushikdutta.async.http.Headers;
 import com.koushikdutta.async.http.WebSocket;
 
+import java.sql.Time;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -103,13 +104,13 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
      * This is the shortest default delay that the socket will wait between reconnects
      * Current it is set to 5 seconds = 5 s * 1000 ms/s = 5000 ms.
      */
-    private static final long MIN_RECONNECT_DELAY = 5000L; // 5 seconds
+    private static final long MIN_RECONNECT_DELAY_MILLIS = 5000L; // 5 seconds
 
     /**
      * This is the longest the socket will wait between reconnects before giving up.
      * Currently it is set to 2 minutes = 2 min * 60 s/min * 1000 ms/s = 120000 ms.
      */
-    private static final long MAX_RECONNECT_DELAY = 120000L; // 2 minutes
+    private static final long MAX_RECONNECT_DELAY_MILLIS = 120000L; // 2 minutes
 
     /**
      * The keys used when creating this PubSubSocket.
@@ -149,7 +150,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     /**
      * Holds the next delay to wait when an attempted reconnect fails
      */
-    private AtomicLong autoReconnectDelay;
+    private AtomicLong autoReconnectDelayMillis;
 
     /**
      * Holds the current session uuid from the Pub/Sub server
@@ -222,7 +223,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
      */
     protected PubSubSocket() {
         this(null, PubSubOptions.DEFAULT_OPTIONS, MoreExecutors.directExecutor());
-        this.autoReconnectDelay = new AtomicLong(MIN_RECONNECT_DELAY);
+        this.autoReconnectDelayMillis = new AtomicLong(MIN_RECONNECT_DELAY_MILLIS);
     }
 
     /**
@@ -248,7 +249,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
         this.executor = executor;
 
         this.sessionUuid = options.getSessionUuid();
-        this.autoReconnectDelay = new AtomicLong(Math.max(options.getConnectTimeout(), MIN_RECONNECT_DELAY));
+        this.autoReconnectDelayMillis = new AtomicLong(Math.max(options.getConnectTimeout().millis(), MIN_RECONNECT_DELAY_MILLIS));
         this.autoReconnect = new AtomicBoolean(options.getAutoReconnect());
 
         this.isConnected = new AtomicBoolean(false);
@@ -338,8 +339,8 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     protected void dropConnection(PubSubDropConnectionOptions dropOptions)
     {
         if(dropOptions != null) {
-            if (dropOptions.getReconnectDelay() < this.autoReconnectDelay.get()) {
-                autoReconnectDelay.set(dropOptions.getReconnectDelay());
+            if (dropOptions.getReconnectDelay().millis() < this.autoReconnectDelayMillis.get()) {
+                autoReconnectDelayMillis.set(dropOptions.getReconnectDelay().millis());
             }
         }
 
@@ -530,8 +531,8 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
 
                         public void onFailure(Throwable error) {
 
-                            long minimumDelay = Math.max(PubSubSocket.this.autoReconnectDelay.get(), msUntilNextRetry);
-                            long nextDelay = Math.min(minimumDelay * 2, MAX_RECONNECT_DELAY);
+                            long minimumDelay = Math.max(PubSubSocket.this.autoReconnectDelayMillis.get(), msUntilNextRetry);
+                            long nextDelay = Math.min(minimumDelay * 2, MAX_RECONNECT_DELAY_MILLIS);
 
                             // Attempt reconnecting forever.
                             reconnectRetry(nextDelay);

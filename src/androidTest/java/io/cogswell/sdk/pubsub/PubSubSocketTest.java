@@ -35,6 +35,7 @@ import io.cogswell.sdk.pubsub.handlers.PubSubErrorHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubErrorResponseHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubNewSessionHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubReconnectHandler;
+import io.cogswell.sdk.utils.Duration;
 
 public class PubSubSocketTest extends TestCase {
 
@@ -162,7 +163,7 @@ public class PubSubSocketTest extends TestCase {
             }
         };
 
-        PubSubOptions pubSubOptions = new PubSubOptions(host, true, 30000L, null);
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
         ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, pubSubOptions);
 
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -226,7 +227,7 @@ public class PubSubSocketTest extends TestCase {
             }
         };
 
-        PubSubOptions pubSubOptions = new PubSubOptions(host, true, 30000L, null);
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
         ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, pubSubOptions);
 
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
