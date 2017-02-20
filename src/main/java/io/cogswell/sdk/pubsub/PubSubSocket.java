@@ -170,7 +170,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     /**
      * Maps outstanding publish request sequence numbers to their server error handlers.
      */
-    private Cache<Long, PubSubErrorHandler> publishErrorHandlers;
+    private Cache<Long, PubSubErrorResponseHandler> publishErrorHandlers;
 
     /**
      * Maps outstanding publish request sequence numbers to their request objects.
@@ -208,17 +208,9 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     private PubSubErrorHandler errorHandler;
 
     /**
-     * Handler called whenever an error having to do with a server response is encountered.
-     * TODO: Update this to comply with https://aviatainc.atlassian.net/browse/PUB-210.
+     * Handler called whenever an error response is received from the server
      */
-    private PubSubErrorHandler responseErrorHandler = new PubSubErrorHandler(){
-        @Override
-        public void onError(Throwable error, Long sequence, String channel) {
-            if (errorHandler!=null) {
-                errorHandler.onError(error, sequence, channel);
-            }
-        }
-    };
+    private PubSubErrorResponseHandler errorResponseHandler;
 
     /**
      * Handler called whenever this connection closes
@@ -303,7 +295,10 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
      *
      * @return CompletableFuture<JSONObject> future that will contain server response to given request, or the sequence number if we are not waiting on the server.
      */
-    protected ListenableFuture<JSONObject> sendRequest(long sequence, JSONObject json, boolean isAwaitingServerResponse, PubSubErrorHandler serverErrorHandler) {
+    protected ListenableFuture<JSONObject> sendRequest(
+            long sequence, JSONObject json, boolean isAwaitingServerResponse,
+            PubSubErrorResponseHandler errorResponseHandler
+    ) {
         SettableFuture<JSONObject> result = SettableFuture.create();
 
         try {
@@ -311,8 +306,9 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                 // If we're awaiting a server response, store this sequence number.
                 outstanding.put(sequence, result);
             }
-            if (serverErrorHandler != null) {
-                publishErrorHandlers.put(sequence, serverErrorHandler);
+
+            if (errorResponseHandler != null) {
+                publishErrorHandlers.put(sequence, errorResponseHandler);
                 publishErrorHandlerRequests.put(sequence, json);
             }
 
@@ -336,7 +332,8 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
 
     /**
      * Closes the underlying connection without preventing reconnects (Used for test purposes).
-     * @param options Options to fine-tune the effect of dropping the connection
+     *
+     * @param dropOptions Options to fine-tune the effect of dropping the connection
      */
     protected void dropConnection(PubSubDropConnectionOptions dropOptions)
     {
@@ -596,44 +593,53 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                 PubSubException error = new PubSubException("Expected sequence number missing: "+message);
                 Log.e("Cogs-SDK","Expected sequence number missing.", error);
 
-                if (responseErrorHandler!=null) {
-                    responseErrorHandler.onError(error, null, null);
+                if (errorHandler != null) {
+                    errorHandler.onError(error);
                 }
             } else {
-                long seq = json.getLong("seq");
+                long sequence = json.getLong("seq");
+                String action = json.getString("action");
+                int code = json.getInt("code");
+                String channel = ("msg".equals(action)) ? json.getString("chan") : json.getString("channel");
 
                 // Resolve a promise if there is a future waiting for a response.
-                SettableFuture<JSONObject> responseFuture = outstanding.getIfPresent(seq);
-                if (responseFuture !=null) {
-                    if (json.getInt("code") != 200) {
-                        responseFuture.setException(new PubSubException("Received an error from the server:" + message));
-                    } else {
+                SettableFuture<JSONObject> responseFuture = outstanding.getIfPresent(sequence);
+
+                if (responseFuture != null) {
+                    if (code == 200) {
                         responseFuture.set(json);
+                    } else {
+                        responseFuture.setException(new PubSubException("Received an error from the server:" + message));
                     }
 
-                    outstanding.invalidate(seq);
+                    outstanding.invalidate(sequence);
                 } else {
                     // All responses with a seq should have a future waiting for it.
                     Log.w("Cogs-SDK","Recieved a message with a sequence number, but no client handler is listening for it: "+message);
                 }
 
-                // Notify the error handler if the server Resolve a promise if there is a future waiting for a response.
-                PubSubErrorHandler errorHandler = publishErrorHandlers.getIfPresent(seq);
+                if ("pub".equals(action)) {
+                    // Notify the error handler if the server Resolve a promise if there is a future waiting for a response.
+                    PubSubErrorResponseHandler errorHandler = publishErrorHandlers.getIfPresent(sequence);
 
-                if (errorHandler != null) {
-                    JSONObject request = publishErrorHandlerRequests.getIfPresent(seq);
-                    String channel = null;
+                    if (errorHandler != null) {
+                        JSONObject request = publishErrorHandlerRequests.getIfPresent(sequence);
 
-                    if (request != null) {
-                        try {
-                            channel = request.getString("chan");
-                        } catch (JSONException e) {
-                            Log.w("Cogs-SDK","Could not get channel name after publish generated a server error.", e);
-                            channel = null;
+                        if (request != null) {
+                            try {
+                                channel = request.getString("chan");
+                            } catch (JSONException e) {
+                                Log.w("Cogs-SDK", "Could not get channel name after publish generated a server error.", e);
+                                channel = null;
+                            }
                         }
-                    }
 
-                    errorHandler.onError(new Throwable(message), seq, channel);
+                        errorHandler.onError(sequence, action, code, channel);
+                    }
+                }
+
+                if (code != 200 && errorResponseHandler != null) {
+                    errorResponseHandler.onError(sequence, action, code, channel);
                 }
             }
         } catch (JSONException e) {
@@ -641,8 +647,8 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
             PubSubException error = new PubSubException("Could not parse response from server: "+message, e);
             Log.e("Cogs-SDK","Could not parse response from server.", error);
 
-            if (errorHandler!=null) {
-                responseErrorHandler.onError(error, null, null);
+            if (errorHandler != null) {
+                errorHandler.onError(error);
             }
         }
     }
@@ -704,11 +710,12 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     }
 
     /**
-     * Registers a handler to call if there are failures working with server responses.
-     * @param handler The handler to register
+     * Registers a handler to call for any all responses from the server.
+     *
+     * @param handler The {@link PubSubErrorResponseHandler handler} to register
      */
-    private void setResponseErrorHandler(PubSubErrorHandler handler) {
-        responseErrorHandler = handler;
+    public void setErrorResponseHandler(PubSubErrorResponseHandler handler) {
+        errorResponseHandler = handler;
     }
 
     /**
