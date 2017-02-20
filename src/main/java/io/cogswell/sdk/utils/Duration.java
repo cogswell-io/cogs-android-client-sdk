@@ -13,6 +13,14 @@ public class Duration {
     private long length;
     private TimeUnit unit;
 
+    /**
+     * Creates a new {@link Duration} denoting the specified length of time.
+     *
+     * @param length the length of time interpreted by <tt>unit</tt>
+     * @param unit the {@link TimeUnit unit} of time for interpreting <tt>length</tt>
+     *
+     * @return the new {@link Duration}
+     */
     public Duration(long length, TimeUnit unit) {
         this.length = length;
         this.unit = unit;
@@ -67,13 +75,13 @@ public class Duration {
     }
 
     /**
-     * Returns a new {@link Duration} denoting the specified length of time.
+     * Creates a new {@link Duration} denoting the specified length of time.
      *
-     * @param length the length of time
-     * @param unit the {@link TimeUnit unit} of time for <tt>length</tt>
+     * @param length the length of time interpreted by <tt>unit</tt>
+     * @param unit the {@link TimeUnit unit} of time for interpreting <tt>length</tt>
      *
      * @return the new {@link Duration}
-     */
+    */
     public static Duration of(long length, TimeUnit unit) {
         return new Duration(length, unit);
     }
