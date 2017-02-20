@@ -48,6 +48,10 @@ public class Duration {
         return unit;
     }
 
+    public long nanos() {
+        return as(TimeUnit.NANOSECONDS);
+    }
+
     /**
      * Returns a new {@link Duration} denoting the specified length of time.
      *
