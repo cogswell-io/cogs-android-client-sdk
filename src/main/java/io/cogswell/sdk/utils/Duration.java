@@ -40,16 +40,30 @@ public class Duration {
         return newUnit.convert(length, unit);
     }
 
+    /**
+     * Convenience method for fetching the length of this duration in nanoseconds.
+     *
+     * @return the length of this duration translated to nanoseconds
+     */
+    public long nanos() {
+        return as(TimeUnit.NANOSECONDS);
+    }
+
+    /**
+     * Convenience method for fetching the length of this duration in milliseconds.
+     *
+     * @return the length of this duration translated to milliseconds
+     */
+    public long millis() {
+        return as(TimeUnit.MILLISECONDS);
+    }
+
     public long getLength() {
         return length;
     }
 
     public TimeUnit getUnit() {
         return unit;
-    }
-
-    public long nanos() {
-        return as(TimeUnit.NANOSECONDS);
     }
 
     /**
