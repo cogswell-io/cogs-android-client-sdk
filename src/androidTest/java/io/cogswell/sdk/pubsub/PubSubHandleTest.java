@@ -25,6 +25,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
+import io.cogswell.sdk.utils.Duration;
 
 public class PubSubHandleTest extends TestCase {
     Object result = null;
@@ -179,7 +180,6 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(((List<String>)responses.get("unsubscribeResponse")).size() == 0);
     }
 
-
     public void testListSubscriptions() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
         final CountDownLatch signal = new CountDownLatch(1);
@@ -231,7 +231,6 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(((List<String>)responses.get("listSubscriptionsResponse")).size() == 1);
         assertTrue(((List<String>)responses.get("listSubscriptionsResponse")).get(0).equals(testChannel));
     }
-
 
     public void testUnsubscribeAll() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
@@ -297,7 +296,6 @@ public class PubSubHandleTest extends TestCase {
         assertEquals(0, ((List<String>)responses.get("listSubscriptionsResponse")).size());
     }
 
-
     public void testSubscribeThenPublishWithoutAck() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
 
@@ -357,7 +355,6 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(responses.get("subscribeReceivedMessage") instanceof PubSubMessageRecord);
         assertEquals(testMessage, ((PubSubMessageRecord)responses.get("subscribeReceivedMessage")).getMessage());
     }
-
 
     public void testSubscribeThenPublishWithAck() throws Exception {
         final Map<String,Object> responses = new HashMap<String, Object>();
@@ -511,7 +508,7 @@ public class PubSubHandleTest extends TestCase {
                     public List<String> apply(UUID getSessionUuidResponse) {
                         responses.put("getSessionUuidResponse", getSessionUuidResponse);
                         PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        pubsubHandle.dropConnection();
+                        pubsubHandle.dropConnection(new PubSubDropConnectionOptions(Duration.of(10, TimeUnit.MILLISECONDS)));
                         return null;
                     }
                 };
@@ -521,7 +518,7 @@ public class PubSubHandleTest extends TestCase {
                 new AsyncFunction<List<String>, PubSubHandle>() {
                     public ListenableFuture<PubSubHandle> apply(List<String> subscribeResponse) {
                         UUID getSessionUuidResponse = (UUID) responses.get("getSessionUuidResponse");
-                        return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, 3000L, getSessionUuidResponse));
+                        return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, Duration.of(3, TimeUnit.SECONDS), getSessionUuidResponse));
                     }
                 };
         ListenableFuture<PubSubHandle> reconnectFuture = Futures.transformAsync(closeFuture, reconnectFunction, executor);

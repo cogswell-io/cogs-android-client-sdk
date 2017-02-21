@@ -5,11 +5,10 @@ package io.cogswell.sdk.pubsub.handlers;
  */
 public interface PubSubErrorHandler {
     /**
-     * Invoked when an error occurs with the socket underlying an instance {@link io.cogswell.sdk.pubsub.PubSubSocket}
+     * Invoked when an error occurs within the handler. This could be an issue with the
+     * socket, an unexpected response from the server, or any other client-side failure.
      *
      * @param error     Error that occurred which caused the invocation of the handler
-     * @param sequence Sequence of the message/request related to the error that occurred.
-     * @param channel  Channel of which the message/request related to the error is associated.
      */
-    void onError(Throwable error, Long sequence, String channel);
+    void onError(Throwable error);
 }

@@ -32,8 +32,10 @@ import java.util.concurrent.TimeUnit;
 
 import io.cogswell.sdk.pubsub.handlers.PubSubCloseHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubErrorHandler;
+import io.cogswell.sdk.pubsub.handlers.PubSubErrorResponseHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubNewSessionHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubReconnectHandler;
+import io.cogswell.sdk.utils.Duration;
 
 public class PubSubSocketTest extends TestCase {
 
@@ -161,7 +163,7 @@ public class PubSubSocketTest extends TestCase {
             }
         };
 
-        PubSubOptions pubSubOptions = new PubSubOptions(host, true, 30000L, null);
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
         ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, pubSubOptions);
 
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -225,7 +227,7 @@ public class PubSubSocketTest extends TestCase {
             }
         };
 
-        PubSubOptions pubSubOptions = new PubSubOptions(host, true, 30000L, null);
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
         ListenableFuture<PubSubSocket> connectFuture = PubSubSocket.connectSocket(keys, pubSubOptions);
 
         Futures.addCallback(connectFuture, new FutureCallback<PubSubSocket>() {
@@ -389,21 +391,26 @@ public class PubSubSocketTest extends TestCase {
             @Override
             public CompletedCallback getClosedCallback() { return null; }
         });
+
         JSONObject requestJson = new JSONObject()
                 .put("seq", testSeqNumber)
                 .put("action", "pub")
                 .put("chan", testChannel)
                 .put("msg", "test-message")
                 .put("ack", false);
-        pss.sendRequest(testSeqNumber, requestJson, false, new PubSubErrorHandler() {
-            @Override
-            public void onError(Throwable error, Long sequence, String channel) {
-                responses.put("onError.sequence", sequence);
-                responses.put("onError.channel", channel);
-                signal.countDown();
 
+        pss.sendRequest(testSeqNumber, requestJson, false, new PubSubErrorResponseHandler() {
+            @Override
+            public void onError(Long sequence, String action, Integer code, String channel) {
+                responses.put("onError.sequence", sequence);
+                responses.put("onError.action", action);
+                responses.put("onError.code", code);
+                responses.put("onError.channel", channel);
+
+                signal.countDown();
             }
         });
+
         JSONObject responseJson = new JSONObject()
                 .put("seq", testSeqNumber)
                 .put("action", "pub")
@@ -417,5 +424,4 @@ public class PubSubSocketTest extends TestCase {
         assertEquals(testSeqNumber, responses.get("onError.sequence"));
         assertEquals(testChannel, responses.get("onError.channel"));
     }
-
 }
