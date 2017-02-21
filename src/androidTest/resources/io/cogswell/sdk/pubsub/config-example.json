@@ -1,0 +1,8 @@
+{
+  "description": "Copy this to a file called config.json, then, in config.json, add your keys.",
+  "keys": {
+    "readKey": "R-*-*",
+    "writeKey": "W-*-*",
+    "adminKey": "A-*-*"
+  }
+}
