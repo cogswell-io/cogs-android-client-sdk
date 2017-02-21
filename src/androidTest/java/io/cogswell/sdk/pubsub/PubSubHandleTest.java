@@ -29,7 +29,12 @@ import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
 public class PubSubHandleTest extends TestCase {
     Object result = null;
     private static int asyncTimeoutSeconds = 10;
-    private Executor executor = MoreExecutors.directExecutor();
+    private Executor executor = new Executor() {
+        public void execute(Runnable r) {
+            new Thread(r).start();
+            //r.run();
+        }
+    };//MoreExecutors.directExecutor();
 
     private List<String> keys = new ArrayList<String>();
     private String host = null;
@@ -548,6 +553,237 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(responses.get("listSubscriptionsFuture") instanceof List);
         assertEquals(1, ((List<String>)responses.get("listSubscriptionsFuture")).size());
         assertEquals(testChannel, ((List<String>)responses.get("listSubscriptionsFuture")).get(0));
+    }
+
+
+    public void testSubscribeToAThenPublishToB() throws Exception {
+        final Map<String,Object> responses = new HashMap<String, Object>();
+
+        final CountDownLatch publishMessageSignal = new CountDownLatch(1);
+        final CountDownLatch subscribeMessageSignal = new CountDownLatch(1);
+
+        final String testChannelA = "TEST-CHANNEL-A";
+        final String testChannelB = "TEST-CHANNEL-B";
+        final String testMessage = "TEST-MESSAGE:"+System.currentTimeMillis()+"-"+Math.random();
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            @Override
+            public void onMessage(PubSubMessageRecord record) {
+                responses.put("subscribeReceivedMessage", record);
+                subscribeMessageSignal.countDown();
+            }
+        };
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        responses.put("pubsubHandle", pubsubHandle);
+                        return pubsubHandle.subscribe(testChannelA, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        AsyncFunction<List<String>, Long> publishFunction =
+                new AsyncFunction<List<String>, Long>() {
+                    public ListenableFuture<Long> apply(List<String> subscribeResponse) {
+                        responses.put("subscribeResponse", subscribeResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.publish(testChannelB, testMessage);
+                    }
+                };
+        ListenableFuture<Long> publishFuture = Futures.transformAsync(subscribeFuture, publishFunction, executor);
+
+        Futures.addCallback(publishFuture, new FutureCallback<Long>() {
+            public void onSuccess(Long publishResponse) {
+                responses.put("publishResponse", publishResponse);
+                publishMessageSignal.countDown();
+            }
+            public void onFailure(Throwable error) {
+                Log.e("TEST","Error:", error);
+                responses.put("publishResponse", error);
+                publishMessageSignal.countDown();
+            }
+        }, executor);
+
+        publishMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+
+        assertTrue(responses.get("error") == null);
+        assertTrue(responses.get("publishResponse") instanceof Long);
+
+        try {
+            subscribeMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+            // If no exception is thrown, this is a failure.
+            assertTrue("Expected a timeout exception, but instead received a message.", false);
+        } catch (InterruptedException e) {
+            // Success!  An exception is expected.
+        }
+    }
+
+
+    public void testSubscribeToAAndBThenPublishToAndB() throws Exception {
+        final Map<String,Object> responses = new HashMap<String, Object>();
+
+        final CountDownLatch subscribeMessageSignalA = new CountDownLatch(1);
+        final CountDownLatch subscribeMessageSignalB = new CountDownLatch(1);
+
+        final String testChannelA = "TEST-CHANNEL-A";
+        final String testChannelB = "TEST-CHANNEL-B";
+        final String testMessageA = "TEST-MESSAGE-A:"+System.currentTimeMillis()+"-"+Math.random();
+        final String testMessageB = "TEST-MESSAGE-B:"+System.currentTimeMillis()+"-"+Math.random();
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            @Override
+            public void onMessage(PubSubMessageRecord record) {
+                responses.put("subscribeReceivedMessage", record);
+                if (record.getMessage().contains("TEST-MESSAGE-A")) {
+                    subscribeMessageSignalA.countDown();
+                }
+                if (record.getMessage().contains("TEST-MESSAGE-B")) {
+                    subscribeMessageSignalB.countDown();
+                }
+            }
+        };
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunctionA =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        responses.put("pubsubHandle", pubsubHandle);
+                        return pubsubHandle.subscribe(testChannelA, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFutureA = Futures.transformAsync(connectFuture, subscribeFunctionA, executor);
+
+        AsyncFunction<List<String>, List<String>> subscribeFunctionB =
+                new AsyncFunction<List<String>, List<String> >() {
+                    public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
+                        responses.put("subscribeResponse", subscribeResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.subscribe(testChannelB, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFutureB = Futures.transformAsync(subscribeFutureA, subscribeFunctionB, executor);
+
+        AsyncFunction<List<String>, Long> publishFunctionA =
+                new AsyncFunction<List<String>, Long>() {
+                    public ListenableFuture<Long> apply(List<String> subscribeResponse) {
+                        responses.put("subscribeResponse", subscribeResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.publish(testChannelA, testMessageA);
+                    }
+                };
+        ListenableFuture<Long> publishFutureA = Futures.transformAsync(subscribeFutureB, publishFunctionA, executor);
+
+        AsyncFunction<Long, Long> publishFunctionB =
+                new AsyncFunction<Long, Long>() {
+                    public ListenableFuture<Long> apply(Long publishResponse) {
+                        responses.put("publishResponse", publishResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.publish(testChannelA, testMessageA);
+                    }
+                };
+        ListenableFuture<Long> publishFutureB = Futures.transformAsync(publishFutureA, publishFunctionB, executor);
+
+        Futures.addCallback(publishFutureB, new FutureCallback<Long>() {
+            public void onSuccess(Long publishResponse) {
+                responses.put("publishResponse", publishResponse);
+            }
+            public void onFailure(Throwable error) {
+                Log.e("TEST","Error:", error);
+                responses.put("publishResponse", error);
+            }
+        }, executor);
+
+        subscribeMessageSignalA.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        subscribeMessageSignalB.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+
+        // Success!  Both messages received.
+    }
+
+
+    public void testSubscribeToAAndBThenPublishToAndBIn4Clients() throws Exception {
+        final Map<String,Object> responses = new HashMap<String, Object>();
+
+        final CountDownLatch subscribeMessageSignalA = new CountDownLatch(1);
+        final CountDownLatch subscribeMessageSignalB = new CountDownLatch(1);
+
+        final String testChannelA = "TEST-CHANNEL-A";
+        final String testChannelB = "TEST-CHANNEL-B";
+        final String testMessageA = "TEST-MESSAGE-A:"+System.currentTimeMillis()+"-"+Math.random();
+        final String testMessageB = "TEST-MESSAGE-B:"+System.currentTimeMillis()+"-"+Math.random();
+
+        final PubSubMessageHandler messageHandlerA = new PubSubMessageHandler() {
+            @Override
+            public void onMessage(PubSubMessageRecord record) {
+                responses.put("subscribeReceivedMessage", record);
+                subscribeMessageSignalA.countDown();
+            }
+        };
+        final PubSubMessageHandler messageHandlerB = new PubSubMessageHandler() {
+            @Override
+            public void onMessage(PubSubMessageRecord record) {
+                responses.put("subscribeReceivedMessage", record);
+                subscribeMessageSignalB.countDown();
+            }
+        };
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunctionA =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        responses.put("pubsubHandle", pubsubHandle);
+                        return pubsubHandle.subscribe(testChannelA, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFutureA = Futures.transformAsync(connectFuture, subscribeFunctionA, executor);
+
+        AsyncFunction<List<String>, List<String>> subscribeFunctionB =
+                new AsyncFunction<List<String>, List<String> >() {
+                    public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
+                        responses.put("subscribeResponse", subscribeResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.subscribe(testChannelB, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFutureB = Futures.transformAsync(subscribeFutureA, subscribeFunctionB, executor);
+
+        AsyncFunction<List<String>, Long> publishFunctionA =
+                new AsyncFunction<List<String>, Long>() {
+                    public ListenableFuture<Long> apply(List<String> subscribeResponse) {
+                        responses.put("subscribeResponse", subscribeResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.publish(testChannelA, testMessageA);
+                    }
+                };
+        ListenableFuture<Long> publishFutureA = Futures.transformAsync(subscribeFutureB, publishFunctionA, executor);
+
+        AsyncFunction<Long, Long> publishFunctionB =
+                new AsyncFunction<Long, Long>() {
+                    public ListenableFuture<Long> apply(Long publishResponse) {
+                        responses.put("publishResponse", publishResponse);
+                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+                        return pubsubHandle.publish(testChannelA, testMessageA);
+                    }
+                };
+        ListenableFuture<Long> publishFutureB = Futures.transformAsync(publishFutureA, publishFunctionB, executor);
+
+        Futures.addCallback(publishFutureB, new FutureCallback<Long>() {
+            public void onSuccess(Long publishResponse) {
+                responses.put("publishResponse", publishResponse);
+            }
+            public void onFailure(Throwable error) {
+                Log.e("TEST","Error:", error);
+                responses.put("publishResponse", error);
+            }
+        }, executor);
+
+        subscribeMessageSignalA.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        subscribeMessageSignalB.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+
+        // Success!  Both messages received.
     }
 
 }
