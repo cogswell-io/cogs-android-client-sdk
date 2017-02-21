@@ -601,7 +601,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                 long sequence = json.getLong("seq");
                 String action = json.getString("action");
                 int code = json.getInt("code");
-                String channel = ("msg".equals(action)) ? json.getString("chan") : json.getString("channel");
+                String channel = null;
 
                 // Resolve a promise if there is a future waiting for a response.
                 SettableFuture<JSONObject> responseFuture = outstanding.getIfPresent(sequence);

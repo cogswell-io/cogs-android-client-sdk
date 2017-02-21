@@ -46,6 +46,21 @@ A problem occurred configuring root project 'cogs-android-example-app'.
 > failed to find Build Tools revision 22.0.1
 ```
 
+## How to run the integration tests
+
+You will need an Android device or an emulator to run these tests.  
+
+1. Open this project in Android Studio.  
+2. Enter your project keys:
+  1. In the Project panel, navigate to `src/androidTest/resources/io/cogswell/sdk/pubsub/config-qa.json`.
+  2. Copy this file to a file named `config.json`
+  3. In `config.json`, copy in keys from your [cogswell.io](https://cogswell.io) account and save the file.
+3. Launch the test:
+  1. In the Project panel, navigate to `src/androidTest/java/io/cogswell/sdk/pubsub`.
+  2. Right click on PubSubHandleTest and select `Run...`
+  
+If the tests fail, confirm that the time that appears on your device or emulator are within 5 minutes of the current time.
+
 ## Publishing
 In order to publish to jcenter, you will need to create a new local.properties file in the root of the project repository, and populate the `user` and `apiKey` fields with the jcenter login credentials.
 

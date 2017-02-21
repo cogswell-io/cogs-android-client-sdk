@@ -28,7 +28,7 @@ import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
 import io.cogswell.sdk.utils.Duration;
 
 public class PubSubHandleTest extends TestCase {
-    Object result = null;
+
     private static int asyncTimeoutSeconds = 10;
     private Executor executor = new Executor() {
         public void execute(Runnable r) {
@@ -67,7 +67,7 @@ public class PubSubHandleTest extends TestCase {
     }
 
     public void testConnect() throws Exception {
-        result = null;
+        final Map<String,Object> responses = new HashMap<String, Object>();
 
         final CountDownLatch signal = new CountDownLatch(1);
 
@@ -76,19 +76,19 @@ public class PubSubHandleTest extends TestCase {
         assertNotNull(connectFuture);
         Futures.addCallback(connectFuture, new FutureCallback<PubSubHandle>() {
             public void onSuccess(PubSubHandle psh) {
-                PubSubHandleTest.this.result = psh;
+                responses.put("psh", psh);
                 signal.countDown();
             }
             public void onFailure(Throwable error) {
                 Log.e("TEST","Error:",error);
-                PubSubHandleTest.this.result = error;
+                responses.put("psh", error);
                 signal.countDown();
             }
         });
 
         signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
 
-        assertTrue(PubSubHandleTest.this.result instanceof PubSubHandle);
+        assertTrue(responses.get("psh") instanceof PubSubHandle);
     }
 
     public void testGetSessionUuid() throws Exception {
@@ -608,13 +608,10 @@ public class PubSubHandleTest extends TestCase {
         assertTrue(responses.get("error") == null);
         assertTrue(responses.get("publishResponse") instanceof Long);
 
-        try {
-            subscribeMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-            // If no exception is thrown, this is a failure.
-            assertTrue("Expected a timeout exception, but instead received a message.", false);
-        } catch (InterruptedException e) {
-            // Success!  An exception is expected.
-        }
+        // We expect to receive NO messages.
+        boolean isCountdownComplete = subscribeMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        // If the countdown has completed, this is a failure.
+        assertFalse("Expected a timeout exception, but instead received a message.", isCountdownComplete);
     }
 
 
@@ -714,73 +711,68 @@ public class PubSubHandleTest extends TestCase {
         final PubSubMessageHandler messageHandlerA = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscribeReceivedMessage", record);
+                responses.put("subscribeReceivedMessageA", record);
                 subscribeMessageSignalA.countDown();
             }
         };
         final PubSubMessageHandler messageHandlerB = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscribeReceivedMessage", record);
+                responses.put("subscribeReceivedMessageB", record);
                 subscribeMessageSignalB.countDown();
             }
         };
 
-        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
-
+        // Subscriber A:
+        ListenableFuture<PubSubHandle> connectFutureSA = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
         AsyncFunction<PubSubHandle, List<String>> subscribeFunctionA =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return pubsubHandle.subscribe(testChannelA, messageHandler);
+                        return pubsubHandle.subscribe(testChannelA, messageHandlerA);
                     }
                 };
-        ListenableFuture<List<String>> subscribeFutureA = Futures.transformAsync(connectFuture, subscribeFunctionA, executor);
+        Futures.transformAsync(connectFutureSA, subscribeFunctionA, executor);
 
-        AsyncFunction<List<String>, List<String>> subscribeFunctionB =
-                new AsyncFunction<List<String>, List<String> >() {
-                    public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.subscribe(testChannelB, messageHandler);
+        // Subscriber B:
+        ListenableFuture<PubSubHandle> connectFutureSB = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunctionB =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        return pubsubHandle.subscribe(testChannelB, messageHandlerB);
                     }
                 };
-        ListenableFuture<List<String>> subscribeFutureB = Futures.transformAsync(subscribeFutureA, subscribeFunctionB, executor);
+        Futures.transformAsync(connectFutureSB, subscribeFunctionB, executor);
 
-        AsyncFunction<List<String>, Long> publishFunctionA =
-                new AsyncFunction<List<String>, Long>() {
-                    public ListenableFuture<Long> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
+        // Publisher A:
+        ListenableFuture<PubSubHandle> connectFuturePA = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+        AsyncFunction<PubSubHandle, Long> publishFunctionA =
+                new AsyncFunction<PubSubHandle, Long>() {
+                    public ListenableFuture<Long> apply(PubSubHandle pubsubHandle) {
                         return pubsubHandle.publish(testChannelA, testMessageA);
                     }
                 };
-        ListenableFuture<Long> publishFutureA = Futures.transformAsync(subscribeFutureB, publishFunctionA, executor);
+        ListenableFuture<Long> publishFutureA = Futures.transformAsync(connectFuturePA, publishFunctionA, executor);
 
-        AsyncFunction<Long, Long> publishFunctionB =
-                new AsyncFunction<Long, Long>() {
-                    public ListenableFuture<Long> apply(Long publishResponse) {
-                        responses.put("publishResponse", publishResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.publish(testChannelA, testMessageA);
+        // Publisher A:
+        ListenableFuture<PubSubHandle> connectFuturePB = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+        AsyncFunction<PubSubHandle, Long> publishFunctionB =
+                new AsyncFunction<PubSubHandle, Long>() {
+                    public ListenableFuture<Long> apply(PubSubHandle pubsubHandle) {
+                        return pubsubHandle.publish(testChannelB, testMessageB);
                     }
                 };
-        ListenableFuture<Long> publishFutureB = Futures.transformAsync(publishFutureA, publishFunctionB, executor);
-
-        Futures.addCallback(publishFutureB, new FutureCallback<Long>() {
-            public void onSuccess(Long publishResponse) {
-                responses.put("publishResponse", publishResponse);
-            }
-            public void onFailure(Throwable error) {
-                Log.e("TEST","Error:", error);
-                responses.put("publishResponse", error);
-            }
-        }, executor);
+        ListenableFuture<Long> publishFutureB = Futures.transformAsync(connectFuturePB, publishFunctionB, executor);
 
         subscribeMessageSignalA.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
         subscribeMessageSignalB.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
 
         // Success!  Both messages received.
+        assertTrue(responses.get("subscribeReceivedMessageA") instanceof PubSubMessageRecord);
+        assertTrue(responses.get("subscribeReceivedMessageB") instanceof PubSubMessageRecord);
+        assertTrue(((PubSubMessageRecord)responses.get("subscribeReceivedMessageA")).getMessage().contains("TEST-MESSAGE-A"));
+        assertTrue(((PubSubMessageRecord)responses.get("subscribeReceivedMessageB")).getMessage().contains("TEST-MESSAGE-B"));
+        assertFalse(((PubSubMessageRecord)responses.get("subscribeReceivedMessageA")).getMessage().contains("TEST-MESSAGE-B"));
+        assertFalse(((PubSubMessageRecord)responses.get("subscribeReceivedMessageB")).getMessage().contains("TEST-MESSAGE-A"));
     }
 
 }
