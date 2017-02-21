@@ -12,9 +12,17 @@ public class Json {
         try {
             JSONTokener tokener = new JSONTokener(json);
             JSONObject root = new JSONObject(tokener);
+
             return new JsonObject(root);
         } catch (JSONException e) {
             return JsonNull.singleton;
         }
+    }
+
+    public static JsonNode parseOrThrow(String json) throws JSONException {
+        JSONTokener tokener = new JSONTokener(json);
+        JSONObject root = new JSONObject(tokener);
+
+        return new JsonObject(root);
     }
 }

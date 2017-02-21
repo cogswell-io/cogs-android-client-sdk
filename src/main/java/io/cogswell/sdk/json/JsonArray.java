@@ -1,5 +1,7 @@
 package io.cogswell.sdk.json;
 
+import android.support.v7.widget.LinearLayoutCompat;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -89,4 +91,9 @@ public class JsonArray extends JsonNode {
     @Override public boolean isNull() { return false; }
     @Override public boolean isNull(String key) { return true; }
     @Override public boolean isNull(int index) { return array == null ? true : array.isNull(index); }
+
+    @Override public boolean has(String key) { return false; }
+    @Override public boolean has(int index) { return array == null ? false : array.length() < index; }
+
+    @Override public JSONObject asObject() { return null; }
 }

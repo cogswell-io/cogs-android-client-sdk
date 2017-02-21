@@ -29,7 +29,7 @@ import io.cogswell.sdk.utils.Duration;
 
 public class PubSubHandleTest extends TestCase {
 
-    private static int asyncTimeoutSeconds = 10;
+    private static int asyncTimeoutSeconds = 20;
     private Executor executor = new Executor() {
         public void execute(Runnable r) {
             new Thread(r).start();
