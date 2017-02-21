@@ -89,4 +89,9 @@ public class JsonObject extends JsonNode {
     @Override public boolean isNull() { return false; }
     @Override public boolean isNull(String key) { return object == null ? true : object.isNull(key); }
     @Override public boolean isNull(int index) { return true; }
+
+    @Override public boolean has(String key) { return object == null ? false : object.has(key); }
+    @Override public boolean has(int index) { return false; }
+
+    @Override public JSONObject asObject() { return object; }
 }

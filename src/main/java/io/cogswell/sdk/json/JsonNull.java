@@ -1,5 +1,7 @@
 package io.cogswell.sdk.json;
 
+import org.json.JSONObject;
+
 /**
  * Created by jedwards on 5/3/16.
  */
@@ -24,4 +26,9 @@ public class JsonNull extends JsonNode {
     @Override public boolean isNull() { return true; }
     @Override public boolean isNull(String key) { return true; }
     @Override public boolean isNull(int index) { return true; }
+
+    @Override public boolean has(String key) { return false; }
+    @Override public boolean has(int index) { return false; }
+
+    @Override public JSONObject asObject() { return null; }
 }

@@ -39,6 +39,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import io.cogswell.sdk.Auth;
+import io.cogswell.sdk.json.Json;
+import io.cogswell.sdk.json.JsonNode;
+import io.cogswell.sdk.json.JsonObject;
 import io.cogswell.sdk.pubsub.exceptions.*;
 import io.cogswell.sdk.pubsub.handlers.*;
 
@@ -372,6 +375,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
             // This calls onCompleted(Exception error, WebSocket webSocket) on when complete:
             AsyncHttpClient.getDefaultInstance().websocket(httpRequest, "websocket", this);
         }
+
         return setupFuture;
     }
 
@@ -383,16 +387,20 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
     private ListenableFuture<PubSubSocket> reconnect() throws Auth.AuthKeyError {
         // Connect, then call the reconnectHandler, then, if we are doing auto-reconnect, get the session UUID.
         ListenableFuture<PubSubSocket> connectFuture = connect();
+
         Function<PubSubSocket, PubSubSocket> reconnectHandlerFunction =
                 new Function<PubSubSocket, PubSubSocket>() {
                     public PubSubSocket apply(PubSubSocket connectResponse) {
                         Log.d("Cogs-SDK", "reconnect() connection established.");
+
                         if (reconnectHandler != null) {
                             reconnectHandler.onReconnect();
                         }
+
                         return connectResponse;
                     }
                 };
+
         ListenableFuture<PubSubSocket> reconnectHandlerFuture = Futures.transform(connectFuture, reconnectHandlerFunction, executor);
 
         return reconnectHandlerFuture;
@@ -409,6 +417,25 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
         }
     }
 
+    private void connectSucceeded() {
+        if (setupFuture != null) {
+            setupFuture.set(PubSubSocket.this);
+        }
+
+        isConnected.set(true);
+        startKeepAliveHearbeatPing();
+    }
+
+    private void connectFailed(Throwable cause) {
+        if (setupFuture != null) {
+            setupFuture.setException(cause);
+        }
+
+        if (errorHandler != null) {
+            errorHandler.onError(new RuntimeException("Error establishing connection to Pub/Sub server.", cause));
+        }
+    }
+
     ///////////////////// EXTENDING ENDPOINT AND IMPLEMENTING MESSAGE_HANDLER ///////////////////// 
 
     /**
@@ -421,10 +448,10 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
         isSetupInProgress.set(false);
         if (error != null) {
             Log.e("Cogs-SDK", "Error on subscription WebSocket connect.", error);
-            setupFuture.setException(error);
+            connectFailed(error);
         } else if (webSocket == null) {
             Log.e("Cogs-SDK", "Error on subscription WebSocket connect - could not connect.");
-            setupFuture.setException(new Exception("Error on subscription WebSocket connect - could not connect - null websocket."));
+            connectFailed(new Exception("Error on subscription WebSocket connect - could not connect - null websocket."));
         } else {
             Log.d("Cogs-SDK", "Successfully connected.");
             PubSubSocket.this.webSocketSession = webSocket;
@@ -439,10 +466,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
             });
 
             if (!autoReconnect.get()) {
-                //currentHandler().connected();
-                setupFuture.set(PubSubSocket.this);
-                isConnected.set(true);
-                startKeepAliveHearbeatPing();
+                connectSucceeded();
             } else {
                 // If we are auto-reconnecting, get the uuid, and notify the newSessionHandler if it has changed.
                 ListenableFuture<UUID> getSessionUuidFuture = new PubSubHandle(PubSubSocket.this, -1L).getSessionUuid();
@@ -459,13 +483,13 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                                 PubSubSocket.this.newSessionHandler.onNewSession(getSessionUuidResponse);
                             }
                         }
-                        setupFuture.set(PubSubSocket.this);
-                        isConnected.set(true);
-                        startKeepAliveHearbeatPing();
+
+                        connectSucceeded();
                     }
                     public void onFailure(Throwable error) {
+                        connectFailed(error);
+
                         // This will trigger another reconnect attempt.
-                        setupFuture.setException(error);
                         isConnected.set(false);
                         stopKeepAliveHeartbeatPing();
                     }
@@ -544,15 +568,17 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
             }
         }, msUntilNextRetry, TimeUnit.MILLISECONDS);
     }
+
     /**
      * Called whenever the connection represented by this PubSubSocket produces errors
+     *
      * @param session The session that has produced an error
      * @param throwable The error that was thrown involving the session
      *//*
     @Override
     public void onError(Session session, Throwable throwable) {
-        if(errorHandler != null) {
-            errorHandler.onError(throwable, null, null);
+        if (errorHandler != null) {
+            errorHandler.onError(throwable);
         }
     }*/
 
@@ -573,13 +599,13 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
         // TODO: [PUB-316] validate format of message received from server, if invalid call error
 
         try {
-            JSONObject json = new JSONObject(message);
+            JsonNode json = Json.parseOrThrow(message);
 
-            if (json.getString("action").equals("msg")) {
-                String id = json.getString("id");
-                String msg = json.getString("msg");
-                String time = json.getString("time");
-                String chan = json.getString("chan");
+            if ("msg".equals(json.str("action"))) {
+                String id = json.str("id");
+                String msg = json.str("msg");
+                String time = json.str("time");
+                String chan = json.str("chan");
 
                 PubSubMessageRecord record = new PubSubMessageRecord(chan, msg, time, id);
                 PubSubMessageHandler handler = msgHandlers.get(chan);
@@ -598,17 +624,17 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                     errorHandler.onError(error);
                 }
             } else {
-                long sequence = json.getLong("seq");
-                String action = json.getString("action");
-                int code = json.getInt("code");
-                String channel = ("msg".equals(action)) ? json.getString("chan") : json.getString("channel");
+                long sequence = json.num("seq").longValue();
+                String action = json.str("action");
+                int code = json.num("code").intValue();
+                String channel = json.str("channel");
 
                 // Resolve a promise if there is a future waiting for a response.
                 SettableFuture<JSONObject> responseFuture = outstanding.getIfPresent(sequence);
 
                 if (responseFuture != null) {
                     if (code == 200) {
-                        responseFuture.set(json);
+                        responseFuture.set(json.asObject());
                     } else {
                         responseFuture.setException(new PubSubException("Received an error from the server:" + message));
                     }
@@ -627,12 +653,7 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                         JSONObject request = publishErrorHandlerRequests.getIfPresent(sequence);
 
                         if (request != null) {
-                            try {
-                                channel = request.getString("chan");
-                            } catch (JSONException e) {
-                                Log.w("Cogs-SDK", "Could not get channel name after publish generated a server error.", e);
-                                channel = null;
-                            }
+                            channel = new JsonObject(request).str("chan");
                         }
 
                         errorHandler.onError(sequence, action, code, channel);

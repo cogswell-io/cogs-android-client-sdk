@@ -13,6 +13,12 @@ This page details general information on the Cogswell Android SDK. For specific 
 * [Pub/Sub Code Samples](API-PUBSUB.md)
 * [CEP Code Samples](API-CEP.md)
 
+## [Running Tests](#testing)
+There is some setup required in order to successfully run integration tests:
+* You need a valid cogswell.io account with a pubsub project with at least one associated, active project key.
+* You need to add your project auth-keys to src/main/java/resources/io.cogswell.sdk.pubsub/config.json
+* Now run the tests by right-clicking on io.cogswell.sdk.pubsub under androidTest, and click run or debug.
+
 ## [Installation](#build-details)
 ### Manual
 * Follow the Android Studio installation instructions appropriate for your platform. http://developer.android.com/sdk/index.html (If you are on Ubuntu 15.04 or later, the only dependencies you need are lib32stdc++6 and lib32z1. Attempting to install some of the others will result in errors)

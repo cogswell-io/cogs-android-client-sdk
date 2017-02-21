@@ -1,5 +1,8 @@
 package io.cogswell.sdk.json;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 /**
  * Created by jedwards on 5/3/16.
  */
@@ -22,4 +25,9 @@ public abstract class JsonNode {
     public abstract boolean isNull();
     public abstract boolean isNull(String key);
     public abstract boolean isNull(int index);
+
+    public abstract boolean has(String key);
+    public abstract boolean has(int index);
+
+    public abstract JSONObject asObject();
 }
