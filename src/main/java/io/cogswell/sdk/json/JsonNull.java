@@ -6,7 +6,7 @@ import org.json.JSONObject;
  * Created by jedwards on 5/3/16.
  */
 public class JsonNull extends JsonNode {
-    protected static final JsonNull singleton = new JsonNull();
+    public static final JsonNull singleton = new JsonNull();
 
     @Override public JsonNode obj(int index) { return singleton; }
     @Override public JsonNode obj(String key) { return singleton; }

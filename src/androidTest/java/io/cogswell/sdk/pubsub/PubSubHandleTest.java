@@ -7,7 +7,6 @@ import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.MoreExecutors;
 
 import junit.framework.TestCase;
 
@@ -15,30 +14,25 @@ import org.json.JSONObject;
 
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.Scanner;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
+import io.cogswell.sdk.utils.Container;
 import io.cogswell.sdk.utils.Duration;
 
 public class PubSubHandleTest extends TestCase {
-    private static int asyncTimeoutSeconds = 20;
+    private static int asyncTimeoutSeconds = 4;
 
-    private Executor executor = new Executor() {
-        public void execute(Runnable r) {
-            new Thread(r).start();
-            //r.run();
-        }
-    };//MoreExecutors.directExecutor();
+    private Executor executor = Executors.newFixedThreadPool(16);
 
     private LinkedList<PubSubHandle> handles = new LinkedList<>();
     private List<String> keys = new ArrayList<String>();
@@ -57,14 +51,19 @@ public class PubSubHandleTest extends TestCase {
         // Add the keys
         JSONObject keysJson = configJson.getJSONObject("keys");
         String rKey = keysJson.optString("readKey", null);
+
         if (rKey != null) {
             keys.add(rKey);
         }
+
         String wKey = keysJson.optString("writeKey", null);
+
         if (wKey != null) {
             keys.add(wKey);
         }
+
         String aKey = keysJson.optString("adminKey", null);
+
         if (aKey != null) {
             keys.add(aKey);
         }
@@ -99,25 +98,22 @@ public class PubSubHandleTest extends TestCase {
         ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
 
         assertNotNull(connectFuture);
+
         Futures.addCallback(connectFuture, new FutureCallback<PubSubHandle>() {
             public void onSuccess(PubSubHandle psh) {
                 stashHandle(psh);
-                queue.offer("CONNECTED");
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:",error);
-                queue.offer("ERROR");
+                queue.offer("failure");
             }
         });
 
-        String result = queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertEquals(result, "CONNECTED");
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testGetSessionUuid() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-        final CountDownLatch signal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
 
         ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
 
@@ -131,32 +127,26 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(getSessionUuidFuture, new FutureCallback<UUID>() {
             public void onSuccess(UUID getSessionUuidResponse) {
-                responses.put("getSessionUuidResponse", getSessionUuidResponse);
-                signal.countDown();
+                queue.offer("success");
             }
 
             public void onFailure(Throwable error) {
-                Log.e("TEST", "Error:", error);
-                responses.put("getSessionUuidResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         });
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("getSessionUuidResponse") instanceof UUID);
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testSubscribe() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch signal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("error", "This should never be called for this test");
+                queue.offer("failuer");
             }
         };
 
@@ -165,8 +155,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
             new AsyncFunction<PubSubHandle, List<String>>() {
                 public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                    responses.put("pubsubHandle", pubsubHandle);
-                    return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                    return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                 }
             };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -174,45 +163,32 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> unsubscribeFunction =
             new AsyncFunction<List<String>, List<String>>() {
                 public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
-                    responses.put("subscribeResponse", subscribeResponse);
-                    PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                    return pubsubHandle.unsubscribe(testChannel);
+                    return handle.get().unsubscribe(testChannel);
                 }
             };
         ListenableFuture<List<String>> unsubscribeFuture = Futures.transformAsync(subscribeFuture, unsubscribeFunction, executor);
 
         Futures.addCallback(unsubscribeFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> unsubscribeResponse) {
-                responses.put("unsubscribeResponse", unsubscribeResponse);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:",error);
-                responses.put("unsubscribeResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         });
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("error") == null);
-        assertTrue(responses.get("pubsubHandle") instanceof PubSubHandle);
-        assertTrue(responses.get("subscribeResponse") instanceof List);
-        assertTrue(((List<String>)responses.get("subscribeResponse")).size() == 1);
-        assertTrue(((List<String>)responses.get("subscribeResponse")).get(0).equals(testChannel));
-        assertTrue(responses.get("unsubscribeResponse") instanceof List);
-        assertTrue(((List<String>)responses.get("unsubscribeResponse")).size() == 0);
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testListSubscriptions() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-        final CountDownLatch signal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("error", "This should never be called for this test");
+                queue.offer("failure");
             }
         };
 
@@ -221,8 +197,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -230,41 +205,32 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> listSubscriptionsFunction =
                 new AsyncFunction<List<String>, List<String>>() {
                     public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.listSubscriptions();
+                        return handle.get().listSubscriptions();
                     }
                 };
         ListenableFuture<List<String>> listSubscriptionsFuture = Futures.transformAsync(subscribeFuture, listSubscriptionsFunction, executor);
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> listSubscriptionsResponse) {
-                responses.put("listSubscriptionsResponse", listSubscriptionsResponse);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:",error);
-                responses.put("listSubscriptionsResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         });
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("error") == null);
-        assertTrue(responses.get("listSubscriptionsResponse") instanceof List);
-        assertTrue(((List<String>)responses.get("listSubscriptionsResponse")).size() == 1);
-        assertTrue(((List<String>)responses.get("listSubscriptionsResponse")).get(0).equals(testChannel));
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testUnsubscribeAll() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-        final CountDownLatch signal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("error", "This should never be called for this test");
+                queue.offer("failure");
             }
         };
 
@@ -273,8 +239,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -282,8 +247,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> unsubscribeAllFunction =
                 new AsyncFunction<List<String>, List<String>>() {
                     public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.unsubscribeAll();
+                        return handle.get().unsubscribeAll();
                     }
                 };
         ListenableFuture<List<String>> unsubscribeAllFuture = Futures.transformAsync(subscribeFuture, unsubscribeAllFunction, executor);
@@ -291,48 +255,34 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> listSubscriptionsFunction =
                 new AsyncFunction<List<String>, List<String>>() {
                     public ListenableFuture<List<String>> apply(List<String> unsubscribeAllResponse) {
-                        responses.put("unsubscribeAllResponse", unsubscribeAllResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.listSubscriptions();
+                        return handle.get().listSubscriptions();
                     }
                 };
         ListenableFuture<List<String>> listSubscriptionsFuture = Futures.transformAsync(unsubscribeAllFuture, listSubscriptionsFunction, executor);
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> listSubscriptionsResponse) {
-                responses.put("listSubscriptionsResponse", listSubscriptionsResponse);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:",error);
-                responses.put("listSubscriptionsResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         });
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertNull(responses.get("error"));
-        assertTrue(responses.get("unsubscribeAllResponse") instanceof List);
-        assertEquals(1, ((List<String>)responses.get("unsubscribeAllResponse")).size());
-        assertEquals(testChannel, ((List<String>)responses.get("unsubscribeAllResponse")).get(0));
-        assertTrue(responses.get("listSubscriptionsResponse") instanceof List);
-        assertEquals(0, ((List<String>)responses.get("listSubscriptionsResponse")).size());
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testSubscribeThenPublishWithoutAck() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch signal = new CountDownLatch(1);
-        final CountDownLatch subscribeMessageSignal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final String testMessage = "TEST-MESSAGE:"+System.currentTimeMillis()+"-"+Math.random();
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscribeReceivedMessage", record);
-                subscribeMessageSignal.countDown();
+                messageQueue.offer(record);
             }
         };
 
@@ -341,8 +291,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -350,49 +299,38 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, Long> publishFunction =
                 new AsyncFunction<List<String>, Long>() {
                     public ListenableFuture<Long> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.publish(testChannel, testMessage);
+                        return handle.get().publish(testChannel, testMessage);
                     }
                 };
         ListenableFuture<Long> publishFuture = Futures.transformAsync(subscribeFuture, publishFunction, executor);
 
         Futures.addCallback(publishFuture, new FutureCallback<Long>() {
             public void onSuccess(Long publishResponse) {
-                responses.put("publishResponse", publishResponse);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:", error);
-                responses.put("publishResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         }, executor);
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
 
-        assertTrue(responses.get("error") == null);
-        assertTrue(responses.get("publishResponse") instanceof Long);
-
-        subscribeMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("subscribeReceivedMessage") instanceof PubSubMessageRecord);
-        assertEquals(testMessage, ((PubSubMessageRecord)responses.get("subscribeReceivedMessage")).getMessage());
+        PubSubMessageRecord messageRecord = messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertEquals(testMessage, messageRecord.getMessage());
+        assertEquals(testChannel, messageRecord.getChannel());
     }
 
     public void testSubscribeThenPublishWithAck() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch signal = new CountDownLatch(1);
-        final CountDownLatch subscribeMessageSignal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final String testMessage = "TEST-MESSAGE:"+System.currentTimeMillis()+"-"+Math.random();
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscribeReceivedMessage", record);
-                subscribeMessageSignal.countDown();
+                messageQueue.offer(record);
             }
         };
 
@@ -401,8 +339,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -410,46 +347,33 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, UUID> publishWithAckFunction =
                 new AsyncFunction<List<String>, UUID>() {
                     public ListenableFuture<UUID> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.publishWithAck(testChannel, testMessage);
+                        return handle.get().publishWithAck(testChannel, testMessage);
                     }
                 };
         ListenableFuture<UUID> publishWithAckFuture = Futures.transformAsync(subscribeFuture, publishWithAckFunction, executor);
 
         Futures.addCallback(publishWithAckFuture, new FutureCallback<UUID>() {
             public void onSuccess(UUID publishWithAckResponse) {
-                responses.put("publishWithAckResponse", publishWithAckResponse);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:", error);
-                responses.put("publishWithAckResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         }, executor);
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("error") == null);
-        assertTrue(responses.get("publishWithAckResponse") instanceof UUID);
-
-        subscribeMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("subscribeReceivedMessage") instanceof PubSubMessageRecord);
-        assertEquals(testMessage, ((PubSubMessageRecord)responses.get("subscribeReceivedMessage")).getMessage());
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals(testMessage, messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS).getMessage());
     }
 
     public void testClose() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch signal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("error", "This should never be called for this test");
+                queue.offer("failure");
             }
         };
 
@@ -458,8 +382,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -467,41 +390,37 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> closeFunction =
                 new AsyncFunction<List<String>, List<String>>() {
                     public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.close();
+                        return handle.get().close();
                     }
                 };
         ListenableFuture<List<String>> closeFuture = Futures.transformAsync(subscribeFuture, closeFunction, executor);
 
         Futures.addCallback(closeFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> closeResponse) {
-                responses.put("closeResponse", closeResponse);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:",error);
-                responses.put("closeResponse", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         });
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertNull(responses.get("error"));
-        assertTrue(responses.get("closeResponse") instanceof List);
-        assertEquals(1, ((List<String>)responses.get("closeResponse")).size());
-        assertEquals(testChannel, ((List<String>)responses.get("closeResponse")).get(0));
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testRestoreSession() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-        final CountDownLatch signal = new CountDownLatch(1);
+        final Container<PubSubHandle> firstHandle = new Container<>();
+        final Container<PubSubHandle> secondHandle = new Container<>();
+        final Container<UUID> uuid = new Container<>();
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+
+//        final Map<String,Object> responses = new HashMap<String, Object>();
+//        final CountDownLatch signal = new CountDownLatch(1);
 
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("error", "This should never be called for this test");
+                queue.offer("failure");
             }
         };
 
@@ -511,8 +430,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannel, messageHandler);
+                        return firstHandle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -520,9 +438,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, UUID> getSessionUuidFunction =
                 new AsyncFunction<List<String>, UUID>() {
                     public ListenableFuture<UUID> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.getSessionUuid();
+                        return firstHandle.get().getSessionUuid();
                     }
                 };
         ListenableFuture<UUID> getSessionUuidFuture = Futures.transformAsync(subscribeFuture, getSessionUuidFunction, executor);
@@ -530,9 +446,8 @@ public class PubSubHandleTest extends TestCase {
         Function<UUID, List<String>> closeFunction =
                 new Function<UUID, List<String>>() {
                     public List<String> apply(UUID getSessionUuidResponse) {
-                        responses.put("getSessionUuidResponse", getSessionUuidResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        pubsubHandle.dropConnection(new PubSubDropConnectionOptions(Duration.of(10, TimeUnit.MILLISECONDS)));
+                        uuid.set(getSessionUuidResponse);
+                        firstHandle.get().dropConnection(new PubSubDropConnectionOptions(Duration.of(10, TimeUnit.MILLISECONDS)));
                         return null;
                     }
                 };
@@ -541,8 +456,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, PubSubHandle> reconnectFunction =
                 new AsyncFunction<List<String>, PubSubHandle>() {
                     public ListenableFuture<PubSubHandle> apply(List<String> subscribeResponse) {
-                        UUID getSessionUuidResponse = (UUID) responses.get("getSessionUuidResponse");
-                        return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, Duration.of(3, TimeUnit.SECONDS), getSessionUuidResponse));
+                        return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, Duration.of(3, TimeUnit.SECONDS), uuid.get()));
                     }
                 };
         ListenableFuture<PubSubHandle> reconnectFuture = Futures.transformAsync(closeFuture, reconnectFunction, executor);
@@ -550,37 +464,27 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> listSubscriptionsFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        return stashHandle(pubsubHandle).listSubscriptions();
+                        return secondHandle.set(stashHandle(pubsubHandle)).listSubscriptions();
                     }
                 };
         ListenableFuture<List<String>> listSubscriptionsFuture = Futures.transformAsync(reconnectFuture, listSubscriptionsFunction, executor);
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> listSubscriptionsFuture) {
-                responses.put("listSubscriptionsFuture", listSubscriptionsFuture);
-                signal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                responses.put("listSubscriptionsFuture", error);
-                signal.countDown();
+                queue.offer("failure");
             }
         });
 
-        signal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertNull(responses.get("error"));
-        assertEquals(testChannel, ((List<String>)responses.get("subscribeResponse")).get(0));
-
-        assertTrue(responses.get("listSubscriptionsFuture") instanceof List);
-        assertEquals(1, ((List<String>)responses.get("listSubscriptionsFuture")).size());
-        assertEquals(testChannel, ((List<String>)responses.get("listSubscriptionsFuture")).get(0));
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testSubscribeToAThenPublishToB() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch publishMessageSignal = new CountDownLatch(1);
-        final CountDownLatch subscribeMessageSignal = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannelA = "TEST-CHANNEL-A";
         final String testChannelB = "TEST-CHANNEL-B";
@@ -588,8 +492,7 @@ public class PubSubHandleTest extends TestCase {
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscribeReceivedMessage", record);
-                subscribeMessageSignal.countDown();
+                messageQueue.offer(record);
             }
         };
 
@@ -598,9 +501,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        handles.push(pubsubHandle);
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannelA, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannelA, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
@@ -608,42 +509,30 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, Long> publishFunction =
                 new AsyncFunction<List<String>, Long>() {
                     public ListenableFuture<Long> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.publish(testChannelB, testMessage);
+                        return handle.get().publish(testChannelB, testMessage);
                     }
                 };
         ListenableFuture<Long> publishFuture = Futures.transformAsync(subscribeFuture, publishFunction, executor);
 
         Futures.addCallback(publishFuture, new FutureCallback<Long>() {
             public void onSuccess(Long publishResponse) {
-                responses.put("publishResponse", publishResponse);
-                publishMessageSignal.countDown();
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:", error);
-                responses.put("publishResponse", error);
-                publishMessageSignal.countDown();
+                queue.offer("failure");
             }
         }, executor);
 
-        publishMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-
-        assertTrue(responses.get("error") == null);
-        assertTrue(responses.get("publishResponse") instanceof Long);
-
-        // We expect to receive NO messages.
-        boolean isCountdownComplete = subscribeMessageSignal.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
-        // If the countdown has completed, this is a failure.
-        assertFalse("Expected a timeout exception, but instead received a message.", isCountdownComplete);
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertNull(messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
 
     public void testSubscribeToAAndBThenPublishToAndB() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch subscribeMessageSignalA = new CountDownLatch(1);
-        final CountDownLatch subscribeMessageSignalB = new CountDownLatch(1);
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueueA = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueueB = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
 
         final String testChannelA = "TEST-CHANNEL-A";
         final String testChannelB = "TEST-CHANNEL-B";
@@ -653,12 +542,12 @@ public class PubSubHandleTest extends TestCase {
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscribeReceivedMessage", record);
-                if (record.getMessage().contains("TEST-MESSAGE-A")) {
-                    subscribeMessageSignalA.countDown();
-                }
-                if (record.getMessage().contains("TEST-MESSAGE-B")) {
-                    subscribeMessageSignalB.countDown();
+                String channel = record.getChannel();
+
+                if (testChannelA.equals(channel)) {
+                    messageQueueA.offer(record);
+                } else if (testChannelB.equals(channel)) {
+                    messageQueueB.offer(record);
                 }
             }
         };
@@ -668,8 +557,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<PubSubHandle, List<String>> subscribeFunctionA =
                 new AsyncFunction<PubSubHandle, List<String>>() {
                     public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
-                        responses.put("pubsubHandle", pubsubHandle);
-                        return stashHandle(pubsubHandle).subscribe(testChannelA, messageHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannelA, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFutureA = Futures.transformAsync(connectFuture, subscribeFunctionA, executor);
@@ -677,9 +565,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> subscribeFunctionB =
                 new AsyncFunction<List<String>, List<String> >() {
                     public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.subscribe(testChannelB, messageHandler);
+                        return handle.get().subscribe(testChannelB, messageHandler);
                     }
                 };
         ListenableFuture<List<String>> subscribeFutureB = Futures.transformAsync(subscribeFutureA, subscribeFunctionB, executor);
@@ -687,9 +573,7 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, Long> publishFunctionA =
                 new AsyncFunction<List<String>, Long>() {
                     public ListenableFuture<Long> apply(List<String> subscribeResponse) {
-                        responses.put("subscribeResponse", subscribeResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.publish(testChannelA, testMessageA);
+                        return handle.get().publish(testChannelA, testMessageA);
                     }
                 };
         ListenableFuture<Long> publishFutureA = Futures.transformAsync(subscribeFutureB, publishFunctionA, executor);
@@ -697,35 +581,40 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<Long, Long> publishFunctionB =
                 new AsyncFunction<Long, Long>() {
                     public ListenableFuture<Long> apply(Long publishResponse) {
-                        responses.put("publishResponse", publishResponse);
-                        PubSubHandle pubsubHandle = (PubSubHandle) responses.get("pubsubHandle");
-                        return pubsubHandle.publish(testChannelA, testMessageB);
+                        return handle.get().publish(testChannelB, testMessageB);
                     }
                 };
         ListenableFuture<Long> publishFutureB = Futures.transformAsync(publishFutureA, publishFunctionB, executor);
 
         Futures.addCallback(publishFutureB, new FutureCallback<Long>() {
             public void onSuccess(Long publishResponse) {
-                responses.put("publishResponse", publishResponse);
+                queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                Log.e("TEST","Error:", error);
-                responses.put("publishResponse", error);
+                queue.offer("failure");
             }
         }, executor);
 
-        assertTrue(subscribeMessageSignalA.await(asyncTimeoutSeconds, TimeUnit.SECONDS));
-        assertTrue(subscribeMessageSignalB.await(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+
+        PubSubMessageRecord recordA = messageQueueA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertNotNull(recordA);
+        assertEquals(testMessageA, recordA.getMessage());
+        assertEquals(testChannelA, recordA.getChannel());
+
+        PubSubMessageRecord recordB = messageQueueB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertNotNull(recordB);
+        assertEquals(testMessageB, recordB.getMessage());
+        assertEquals(testChannelB, recordB.getChannel());
 
         // Success!  Both messages received.
     }
 
-
     public void testSubscribeToAAndBThenPublishToAndBIn4Clients() throws Exception {
-        final Map<String,Object> responses = new HashMap<String, Object>();
-
-        final CountDownLatch subscribeMessageSignalA = new CountDownLatch(1);
-        final CountDownLatch subscribeMessageSignalB = new CountDownLatch(1);
+        final BlockingQueue<String> queueA = new LinkedBlockingQueue<>();
+        final BlockingQueue<String> queueB = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueueA = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueueB = new LinkedBlockingQueue<>();
 
         final String testChannelA = "TEST-CHANNEL-A";
         final String testChannelB = "TEST-CHANNEL-B";
@@ -735,16 +624,16 @@ public class PubSubHandleTest extends TestCase {
         final PubSubMessageHandler messageHandlerChannelA = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscriberToAReceivedMessageA", record);
-                subscribeMessageSignalA.countDown();
+                Log.e("[MESSAGE]", "channel:'" + record.getChannel() + "', message:'" + record.getMessage() + "'");
+                messageQueueA.offer(record);
             }
         };
 
         final PubSubMessageHandler messageHandlerChannelB = new PubSubMessageHandler() {
             @Override
             public void onMessage(PubSubMessageRecord record) {
-                responses.put("subscriberToBReceivedMessageB", record);
-                subscribeMessageSignalB.countDown();
+                Log.e("[MESSAGE]", "channel:'" + record.getChannel() + "', message:'" + record.getMessage() + "'");
+                messageQueueB.offer(record);
             }
         };
 
@@ -778,6 +667,15 @@ public class PubSubHandleTest extends TestCase {
                 };
         ListenableFuture<Long> publishFutureA = Futures.transformAsync(connectFuturePublisherA, publishFunctionA, executor);
 
+        Futures.addCallback(publishFutureA, new FutureCallback<Long>() {
+            public void onSuccess(Long publishResponse) {
+                queueA.offer("success");
+            }
+            public void onFailure(Throwable error) {
+                queueA.offer("failure");
+            }
+        }, executor);
+
         // Publisher B:
         ListenableFuture<PubSubHandle> connectFuturePublisherB = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
         AsyncFunction<PubSubHandle, Long> publishFunctionB =
@@ -788,16 +686,26 @@ public class PubSubHandleTest extends TestCase {
                 };
         ListenableFuture<Long> publishFutureB = Futures.transformAsync(connectFuturePublisherB, publishFunctionB, executor);
 
-        assertTrue(subscribeMessageSignalA.await(asyncTimeoutSeconds, TimeUnit.SECONDS));
-        assertTrue(subscribeMessageSignalB.await(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        Futures.addCallback(publishFutureB, new FutureCallback<Long>() {
+            public void onSuccess(Long publishResponse) {
+                queueB.offer("success");
+            }
+            public void onFailure(Throwable error) {
+                queueB.offer("failure");
+            }
+        }, executor);
 
-        // Success!  Both messages received.
-        assertTrue(responses.get("subscriberToAReceivedMessageA") instanceof PubSubMessageRecord);
-        assertTrue(responses.get("subscriberToBReceivedMessageB") instanceof PubSubMessageRecord);
-        assertTrue(((PubSubMessageRecord)responses.get("subscriberToAReceivedMessageA")).getMessage().contains("TEST-MESSAGE-A"));
-        assertTrue(((PubSubMessageRecord)responses.get("subscriberToBReceivedMessageB")).getMessage().contains("TEST-MESSAGE-B"));
-        assertFalse(((PubSubMessageRecord)responses.get("subscriberToAReceivedMessageA")).getMessage().contains("TEST-MESSAGE-B"));
-        assertFalse(((PubSubMessageRecord)responses.get("subscriberToBReceivedMessageB")).getMessage().contains("TEST-MESSAGE-A"));
+        assertEquals("success", queueA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("success", queueB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+
+        PubSubMessageRecord recordA = messageQueueA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertNotNull(recordA);
+        assertEquals(testMessageA, recordA.getMessage());
+        assertEquals(testChannelA, recordA.getChannel());
+
+        PubSubMessageRecord recordB = messageQueueB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertNotNull(recordB);
+        assertEquals(testMessageB, recordB.getMessage());
+        assertEquals(testChannelB, recordB.getChannel());
     }
-
 }
