@@ -267,19 +267,9 @@ public class PubSubHandle {
      * @return ListenableFuture<List<String>> which, on success, completes with the list of channels
      * from which the session was unsubscribed.
      */
-    public ListenableFuture<List<String>> close() {
-        ListenableFuture<List<String>> unsubscribeAllFuture = unsubscribeAll();
-
-        Function<List<String>, List<String>> closeFunction = new Function<List<String>, List<String>>() {
-            public List<String> apply(List<String> unsubscribeAllResponse) {
-                socket.close();
-                return unsubscribeAllResponse;
-            }
-        };
-
-        ListenableFuture<List<String>> closedFuture = Futures.transform(unsubscribeAllFuture, closeFunction);
-
-        return closedFuture;
+    public ListenableFuture<Void> close() {
+        socket.close();
+        return Futures.immediateFuture(null);
     }
 
     /**

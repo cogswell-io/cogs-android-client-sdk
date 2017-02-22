@@ -381,16 +381,16 @@ public class PubSubHandleTest extends TestCase {
                 };
         ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
 
-        AsyncFunction<List<String>, List<String>> closeFunction =
-                new AsyncFunction<List<String>, List<String>>() {
-                    public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
+        AsyncFunction<List<String>, Void> closeFunction =
+                new AsyncFunction<List<String>, Void>() {
+                    public ListenableFuture<Void> apply(List<String> subscribeResponse) {
                         return handle.get().close();
                     }
                 };
-        ListenableFuture<List<String>> closeFuture = Futures.transformAsync(subscribeFuture, closeFunction, executor);
+        ListenableFuture<Void> closeFuture = Futures.transformAsync(subscribeFuture, closeFunction, executor);
 
-        Futures.addCallback(closeFuture, new FutureCallback<List<String>>() {
-            public void onSuccess(List<String> closeResponse) {
+        Futures.addCallback(closeFuture, new FutureCallback<Void>() {
+            public void onSuccess(Void closeResponse) {
                 queue.offer("success");
             }
             public void onFailure(Throwable error) {
