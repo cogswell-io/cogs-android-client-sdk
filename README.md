@@ -58,7 +58,7 @@ You will need an Android device or an emulator to run these tests.
 
 1. Open this project in Android Studio.  
 2. Enter your project keys:
-  1. In the Project panel, navigate to `src/androidTest/resources/io/cogswell/sdk/pubsub/config-qa.json`.
+  1. In the Project panel, navigate to `src/androidTest/resources/io/cogswell/sdk/pubsub/config-example.json`.
   2. Copy this file to a file named `config.json`
   3. In `config.json`, copy in keys from your [cogswell.io](https://cogswell.io) account and save the file.
 3. Launch the test:
