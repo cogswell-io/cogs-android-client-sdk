@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
@@ -162,6 +164,10 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> unsubscribeFunction =
             new AsyncFunction<List<String>, List<String>>() {
                 public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
+                    if (!subscribeResponse.contains(testChannel)) {
+                        queue.offer("expected-channel-not-in-subscriptions");
+                    }
+
                     return handle.get().unsubscribe(testChannel);
                 }
             };
@@ -203,6 +209,10 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> listSubscriptionsFunction =
                 new AsyncFunction<List<String>, List<String>>() {
                     public ListenableFuture<List<String>> apply(List<String> subscribeResponse) {
+                        if (!subscribeResponse.contains(testChannel)) {
+                            queue.offer("expected-channel-not-in-subscriptions");
+                        }
+
                         return handle.get().listSubscriptions();
                     }
                 };
@@ -252,6 +262,10 @@ public class PubSubHandleTest extends TestCase {
         AsyncFunction<List<String>, List<String>> listSubscriptionsFunction =
                 new AsyncFunction<List<String>, List<String>>() {
                     public ListenableFuture<List<String>> apply(List<String> unsubscribeAllResponse) {
+                        if (!unsubscribeAllResponse.contains(testChannel)) {
+                            queue.offer("expected-channel-not-in-unsubscribe-response");
+                        }
+
                         return handle.get().listSubscriptions();
                     }
                 };
@@ -406,6 +420,8 @@ public class PubSubHandleTest extends TestCase {
         final Container<PubSubHandle> secondHandle = new Container<>();
         final Container<UUID> uuid = new Container<>();
         final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final Container<SortedSet<String>> originalSubscriptions = new Container<>();
+        final Container<SortedSet<String>> reconnectSubscriptions = new Container<>();
 
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
@@ -427,7 +443,8 @@ public class PubSubHandleTest extends TestCase {
 
         AsyncFunction<List<String>, UUID> getSessionUuidFunction =
                 new AsyncFunction<List<String>, UUID>() {
-                    public ListenableFuture<UUID> apply(List<String> subscribeResponse) {
+                    public ListenableFuture<UUID> apply(List<String> subscriptions) {
+                        originalSubscriptions.set(new TreeSet<>(subscriptions));
                         return firstHandle.get().getSessionUuid();
                     }
                 };
@@ -435,8 +452,8 @@ public class PubSubHandleTest extends TestCase {
 
         Function<UUID, List<String>> closeFunction =
                 new Function<UUID, List<String>>() {
-                    public List<String> apply(UUID getSessionUuidResponse) {
-                        uuid.set(getSessionUuidResponse);
+                    public List<String> apply(UUID sessionId) {
+                        uuid.set(sessionId);
                         firstHandle.get().dropConnection(new PubSubDropConnectionOptions(Duration.of(10, TimeUnit.MILLISECONDS)));
                         return null;
                     }
@@ -445,7 +462,7 @@ public class PubSubHandleTest extends TestCase {
 
         AsyncFunction<List<String>, PubSubHandle> reconnectFunction =
                 new AsyncFunction<List<String>, PubSubHandle>() {
-                    public ListenableFuture<PubSubHandle> apply(List<String> subscribeResponse) {
+                    public ListenableFuture<PubSubHandle> apply(List<String> subscriptions) {
                         return PubSubSDK.getInstance().connect(keys, new PubSubOptions(host, false, Duration.of(3, TimeUnit.SECONDS), uuid.get()));
                     }
                 };
@@ -461,6 +478,7 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> subscriptions) {
+                reconnectSubscriptions.set(new TreeSet<>(subscriptions));
                 queue.offer(subscriptions.contains(testChannel) ? "success" : "channel-missing-from-subscriptions");
             }
             public void onFailure(Throwable error) {
@@ -469,6 +487,7 @@ public class PubSubHandleTest extends TestCase {
         });
 
         assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals(originalSubscriptions.get(), reconnectSubscriptions.get());
     }
 
     public void testSubscribeToAThenPublishToB() throws Exception {

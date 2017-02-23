@@ -150,7 +150,11 @@ public class PubSubSocketTest extends TestCase {
 
         final PubSubCloseHandler closeHandler = new PubSubCloseHandler() {
             public void onClose(Throwable error) {
-                closeQueue.offer("closed");
+                if (error == null) {
+                    closeQueue.offer("closed-without-cause");
+                } else {
+                    closeQueue.offer("closed");
+                }
             }
         };
 
@@ -179,7 +183,7 @@ public class PubSubSocketTest extends TestCase {
                 pubsubSocket.onCompleted(expectedConnectionException);
             }
             public void onFailure(Throwable error) {
-                closeQueue.offer("failure");
+                closeQueue.offer("connect-failure");
             }
         }, executor);
 
@@ -245,7 +249,7 @@ public class PubSubSocketTest extends TestCase {
                 pubsubSocket.onCompleted(expectedConnectionException);
             }
             public void onFailure(Throwable error) {
-                closeQueue.offer("failure");
+                closeQueue.offer("connect-failure");
             }
         }, executor);
 
@@ -273,7 +277,7 @@ public class PubSubSocketTest extends TestCase {
                 });
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("connect-failure");
             }
         }, executor);
 
