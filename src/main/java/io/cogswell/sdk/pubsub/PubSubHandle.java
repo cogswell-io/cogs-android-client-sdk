@@ -61,16 +61,15 @@ public class PubSubHandle {
         long seq = sequence.getAndIncrement();
 
         try {
-            JSONObject request = new JSONObject()
-                    .put("seq", seq);
+            JSONObject request = new JSONObject().put("seq", seq);
 
             for(int i = 0; i < nameValuePairs.length-1; i += 2) {
                 request.put((String)nameValuePairs[i], nameValuePairs[i+1]);
             }
 
-            ListenableFuture<JSONObject> getSessionFuture = socket.sendRequest(seq, request, isAwaitingServerResponse, serverErrorHandler);
+            ListenableFuture<JSONObject> sendFuture = socket.sendRequest(seq, request, isAwaitingServerResponse, serverErrorHandler);
 
-            Futures.addCallback(getSessionFuture, new FutureCallback<JSONObject>() {
+            Futures.addCallback(sendFuture, new FutureCallback<JSONObject>() {
                 public void onSuccess(JSONObject json) {
                     try {
                         T result = jsonreader.apply(json);
@@ -81,7 +80,7 @@ public class PubSubHandle {
                     }
                 }
                 public void onFailure(Throwable t) {
-                    Log.e("TEST","Error:",t);
+                    Log.e("COGS-SDK", "Error:", t);
                     outcome.setException(t);
                 }
             });
@@ -239,7 +238,7 @@ public class PubSubHandle {
                 Long seq = json.getLong("seq");
                 return seq;
             }
-        }, false, handler, "action", "pub", "chan", channel, "msg", message, "ack", false);
+        }, false, handler, "action", "pub", "chan", channel, "msg", message);
     }
 
     /**
@@ -254,7 +253,7 @@ public class PubSubHandle {
     public ListenableFuture<UUID> publishWithAck(String channel, String message) {
         return sendJSON(new JSONReaderFunction<UUID>() {
             @Override
-                public UUID apply(JSONObject json) throws JSONException {
+            public UUID apply(JSONObject json) throws JSONException {
                 UUID uuid = UUID.fromString(json.getString("id"));
                 return uuid;
             }

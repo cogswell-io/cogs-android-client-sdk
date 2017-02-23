@@ -102,10 +102,10 @@ public class PubSubHandleTest extends TestCase {
         Futures.addCallback(connectFuture, new FutureCallback<PubSubHandle>() {
             public void onSuccess(PubSubHandle psh) {
                 stashHandle(psh);
-                queue.offer("success");
+                queue.offer(psh == null ? "null-pubsub-handle" : "success");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("connect-error");
             }
         });
 
@@ -126,12 +126,12 @@ public class PubSubHandleTest extends TestCase {
         ListenableFuture<UUID> getSessionUuidFuture = Futures.transformAsync(connectFuture, getSessionUuidFunction, executor);
 
         Futures.addCallback(getSessionUuidFuture, new FutureCallback<UUID>() {
-            public void onSuccess(UUID getSessionUuidResponse) {
-                queue.offer("success");
+            public void onSuccess(UUID sessionId) {
+                queue.offer(sessionId == null ? "null-session-id" : "success");
             }
 
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("session-id-fetch-failure");
             }
         });
 
@@ -145,7 +145,7 @@ public class PubSubHandleTest extends TestCase {
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                queue.offer("failure");
+                queue.offer("should-not-have-received-a-message");
             }
         };
 
@@ -169,10 +169,10 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(unsubscribeFuture, new FutureCallback<List<String>>() {
             public void onSuccess(List<String> unsubscribeResponse) {
-                queue.offer("success");
+                queue.offer(unsubscribeResponse.isEmpty() ? "success" : "subscriptions-not-empty");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("unsubscribe-failure");
             }
         });
 
@@ -186,7 +186,7 @@ public class PubSubHandleTest extends TestCase {
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                queue.offer("failure");
+                queue.offer("should-not-have-received-a-message");
             }
         };
 
@@ -209,11 +209,11 @@ public class PubSubHandleTest extends TestCase {
         ListenableFuture<List<String>> listSubscriptionsFuture = Futures.transformAsync(subscribeFuture, listSubscriptionsFunction, executor);
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
-            public void onSuccess(List<String> listSubscriptionsResponse) {
-                queue.offer("success");
+            public void onSuccess(List<String> subscriptions) {
+                queue.offer(subscriptions.contains(testChannel) ? "success" : "channel-missing-from-subscriptions");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("subscription-listing-failure");
             }
         });
 
@@ -227,7 +227,7 @@ public class PubSubHandleTest extends TestCase {
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                queue.offer("failure");
+                queue.offer("should-not-have-received-a-message");
             }
         };
 
@@ -258,11 +258,11 @@ public class PubSubHandleTest extends TestCase {
         ListenableFuture<List<String>> listSubscriptionsFuture = Futures.transformAsync(unsubscribeAllFuture, listSubscriptionsFunction, executor);
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
-            public void onSuccess(List<String> listSubscriptionsResponse) {
-                queue.offer("success");
+            public void onSuccess(List<String> subscriptions) {
+                queue.offer(subscriptions.isEmpty() ? "success" : "still-subscribed-after-unsubscribe-all");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("subscription-listing-failure");
             }
         });
 
@@ -302,10 +302,10 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(publishFuture, new FutureCallback<Long>() {
             public void onSuccess(Long publishResponse) {
-                queue.offer("success");
+                queue.offer(publishResponse == null ? "null-publish-response" : "success");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("publish-failure");
             }
         }, executor);
 
@@ -349,10 +349,10 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(publishWithAckFuture, new FutureCallback<UUID>() {
             public void onSuccess(UUID publishWithAckResponse) {
-                queue.offer("success");
+                queue.offer(publishWithAckResponse == null ? "null-message-id-response" : "success");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("publish-with-ack-failure");
             }
         }, executor);
 
@@ -367,7 +367,7 @@ public class PubSubHandleTest extends TestCase {
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                queue.offer("failure");
+                queue.offer("should-not-have-received-a-message");
             }
         };
 
@@ -394,7 +394,7 @@ public class PubSubHandleTest extends TestCase {
                 queue.offer("success");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("socket-close-failure");
             }
         });
 
@@ -410,7 +410,7 @@ public class PubSubHandleTest extends TestCase {
         final String testChannel = "TEST-CHANNEL";
         final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                queue.offer("failure");
+                queue.offer("should-not-have-received-a-message");
             }
         };
 
@@ -460,11 +460,11 @@ public class PubSubHandleTest extends TestCase {
         ListenableFuture<List<String>> listSubscriptionsFuture = Futures.transformAsync(reconnectFuture, listSubscriptionsFunction, executor);
 
         Futures.addCallback(listSubscriptionsFuture, new FutureCallback<List<String>>() {
-            public void onSuccess(List<String> listSubscriptionsFuture) {
-                queue.offer("success");
+            public void onSuccess(List<String> subscriptions) {
+                queue.offer(subscriptions.contains(testChannel) ? "success" : "channel-missing-from-subscriptions");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("subscription-listing-failure");
             }
         });
 
@@ -505,10 +505,10 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(publishFuture, new FutureCallback<Long>() {
             public void onSuccess(Long publishResponse) {
-                queue.offer("success");
+                queue.offer(publishResponse == null ? "null-publish-response" : "success");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("publish-failure");
             }
         }, executor);
 
@@ -576,10 +576,10 @@ public class PubSubHandleTest extends TestCase {
 
         Futures.addCallback(publishFutureB, new FutureCallback<Long>() {
             public void onSuccess(Long publishResponse) {
-                queue.offer("success");
+                queue.offer(publishResponse == null ? "null-publish-response" : "success");
             }
             public void onFailure(Throwable error) {
-                queue.offer("failure");
+                queue.offer("publish-failure");
             }
         }, executor);
 
@@ -601,6 +601,9 @@ public class PubSubHandleTest extends TestCase {
     public void testSubscribeToAAndBThenPublishToAndBIn4Clients() throws Exception {
         final Container<PubSubHandle> pubHandleA = new Container<>();
         final Container<PubSubHandle> pubHandleB = new Container<>();
+
+        final Container<UUID> messageIdA = new Container<>();
+        final Container<UUID> messageIdB = new Container<>();
 
         final CountDownLatch readyLatch = new CountDownLatch(4);
 
@@ -644,10 +647,10 @@ public class PubSubHandleTest extends TestCase {
                 new FutureCallback<List<String>>() {
                     public void onSuccess(List<String> result) {
                         readyLatch.countDown();
-                        queueSubA.offer("success");
+                        queueSubA.offer(result.contains(testChannelA) ? "success" : "channel-A-missing-from-subscriptions");
                     }
                     public void onFailure(Throwable t) {
-                        queueSubA.offer("failure");
+                        queueSubA.offer("subscription-A-failure");
                     }
                 }
         );
@@ -666,10 +669,10 @@ public class PubSubHandleTest extends TestCase {
                 new FutureCallback<List<String>>() {
                     public void onSuccess(List<String> result) {
                         readyLatch.countDown();
-                        queueSubB.offer("success");
+                        queueSubB.offer(result.contains(testChannelB) ? "success" : "channel-B-missing-from-subscriptions");
                     }
                     public void onFailure(Throwable t) {
-                        queueSubB.offer("failure");
+                        queueSubB.offer("subscription-B-failure");
                     }
                 }
         );
@@ -683,7 +686,7 @@ public class PubSubHandleTest extends TestCase {
                         readyLatch.countDown();
                     }
                     public void onFailure(Throwable t) {
-                        queuePubA.offer("failure");
+                        queuePubA.offer("publisher-A-connect-failure");
                     }
                 }
         );
@@ -691,13 +694,14 @@ public class PubSubHandleTest extends TestCase {
         final Runnable publishA = new Runnable() {
             public void run() {
                 Futures.addCallback(
-                        pubHandleA.get().publish(testChannelA, testMessageA),
-                        new FutureCallback<Long>() {
-                            public void onSuccess(Long result) {
-                                queuePubA.offer("success");
+                        pubHandleA.get().publishWithAck(testChannelA, testMessageA),
+                        new FutureCallback<UUID>() {
+                            public void onSuccess(UUID messageId) {
+                                messageIdA.set(messageId);
+                                queuePubA.offer(messageId == null ? "null-sequence-for-channel-A-publish" : "success");
                             }
                             public void onFailure(Throwable t) {
-                                queuePubA.offer("failed");
+                                queuePubA.offer("publish-to-channel-A-failed");
                             }
                         }
                 );
@@ -713,7 +717,7 @@ public class PubSubHandleTest extends TestCase {
                         readyLatch.countDown();
                     }
                     public void onFailure(Throwable t) {
-                        queuePubB.offer("failure");
+                        queuePubB.offer("publisher-B-connect-failure");
                     }
                 }
         );
@@ -721,19 +725,21 @@ public class PubSubHandleTest extends TestCase {
         final Runnable publishB = new Runnable() {
             public void run() {
                 Futures.addCallback(
-                        pubHandleB.get().publish(testChannelB, testMessageB),
-                        new FutureCallback<Long>() {
-                            public void onSuccess(Long result) {
-                                queuePubB.offer("success");
+                        pubHandleB.get().publishWithAck(testChannelB, testMessageB),
+                        new FutureCallback<UUID>() {
+                            public void onSuccess(UUID messageId) {
+                                messageIdB.set(messageId);
+                                queuePubB.offer(messageId == null ? "null-message-id-for-channel-B-publish" : "success");
                             }
                             public void onFailure(Throwable t) {
-                                queuePubB.offer("failed");
+                                queuePubB.offer("publish-to-channel-B-failed");
                             }
                         }
                 );
             }
         };
 
+        long asyncTimeoutSeconds = 3;
 
         // Wait for all connections to be established.
         readyLatch.await(asyncTimeoutSeconds, TimeUnit.SECONDS);
@@ -741,19 +747,21 @@ public class PubSubHandleTest extends TestCase {
         executor.execute(publishA);
         executor.execute(publishB);
 
-        assertEquals("success", queuePubA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
-        assertEquals("success", queuePubB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
         assertEquals("success", queueSubA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
         assertEquals("success", queueSubB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("success", queuePubA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("success", queuePubB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
 
         PubSubMessageRecord recordA = messageQueueA.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
         assertNotNull(recordA);
         assertEquals(testMessageA, recordA.getMessage());
         assertEquals(testChannelA, recordA.getChannel());
+        assertEquals(messageIdA.get(), recordA.getId());
 
         PubSubMessageRecord recordB = messageQueueB.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
         assertNotNull(recordB);
         assertEquals(testMessageB, recordB.getMessage());
         assertEquals(testChannelB, recordB.getChannel());
+        assertEquals(messageIdB.get(), recordB.getId());
     }
 }
