@@ -38,6 +38,7 @@ public class PubSubHandleTest extends TestCase {
 
     private LinkedList<PubSubHandle> handles = new LinkedList<>();
     private List<String> keys = new ArrayList<String>();
+    private List<String> readOnlyKeys = new ArrayList<String>();
     private String host = null;
 
     @Override
@@ -56,6 +57,7 @@ public class PubSubHandleTest extends TestCase {
 
         if (rKey != null) {
             keys.add(rKey);
+            readOnlyKeys.add(rKey);
         }
 
         String wKey = keysJson.optString("writeKey", null);
@@ -372,6 +374,49 @@ public class PubSubHandleTest extends TestCase {
 
         assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
         assertEquals(testMessage, messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS).getMessage());
+    }
+
+    public void testSubscribeThenBadPublishWithAck() throws Exception {
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
+
+        final String testChannel = "TEST-CHANNEL";
+        final String testMessage = "TEST-MESSAGE:"+System.currentTimeMillis()+"-"+Math.random();
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+                messageQueue.offer(record);
+            }
+        };
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(readOnlyKeys, new PubSubOptions(host));
+
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        AsyncFunction<List<String>, UUID> publishWithAckFunction =
+                new AsyncFunction<List<String>, UUID>() {
+                    public ListenableFuture<UUID> apply(List<String> subscribeResponse) {
+                        return handle.get().publishWithAck(testChannel, testMessage);
+                    }
+                };
+        ListenableFuture<UUID> publishWithAckFuture = Futures.transformAsync(subscribeFuture, publishWithAckFunction, executor);
+
+        Futures.addCallback(publishWithAckFuture, new FutureCallback<UUID>() {
+            public void onSuccess(UUID publishWithAckResponse) {
+                queue.offer(publishWithAckResponse == null ? "null-message-id-response" : "success");
+            }
+            public void onFailure(Throwable error) {
+                queue.offer("publish-with-ack-failure");
+            }
+        }, executor);
+
+        assertEquals("publish-with-ack-failure", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testClose() throws Exception {
