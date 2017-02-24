@@ -12,5 +12,5 @@ public interface PubSubErrorResponseHandler {
      * @param code     Response code from the server.
      * @param channel  Channel (if any) to which the originating message/request referred.
      */
-    void onError(Long sequence, String action, Integer code, String channel);
+    void onErrorResponse(Long sequence, String action, Integer code, String channel);
 }

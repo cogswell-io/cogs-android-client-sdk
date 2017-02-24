@@ -27,6 +27,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import io.cogswell.sdk.pubsub.handlers.PubSubErrorResponseHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
 import io.cogswell.sdk.utils.Container;
 import io.cogswell.sdk.utils.Duration;
@@ -39,6 +40,7 @@ public class PubSubHandleTest extends TestCase {
     private LinkedList<PubSubHandle> handles = new LinkedList<>();
     private List<String> keys = new ArrayList<String>();
     private List<String> readOnlyKeys = new ArrayList<String>();
+    private List<String> writeOnlyKeys = new ArrayList<String>();
     private String host = null;
 
     @Override
@@ -64,6 +66,7 @@ public class PubSubHandleTest extends TestCase {
 
         if (wKey != null) {
             keys.add(wKey);
+            writeOnlyKeys.add(wKey);
         }
 
         String aKey = keysJson.optString("adminKey", null);
@@ -458,6 +461,48 @@ public class PubSubHandleTest extends TestCase {
         });
 
         assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
+    public void testErrorResponse() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final BlockingQueue<String> errorResponseQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> errorQueue = new LinkedBlockingQueue<>(1);
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+            }
+        };
+
+        final PubSubErrorResponseHandler errorResponseHandler = new PubSubErrorResponseHandler() {
+            public void onErrorResponse(Long sequence, String action, Integer code, String channel) {
+                errorResponseQueue.offer("response error");
+            }
+        };
+
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(writeOnlyKeys, pubSubOptions);
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        pubsubHandle.onErrorResponse(errorResponseHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe("channel of doom", messageHandler);
+                    }
+                };
+
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        Futures.addCallback(subscribeFuture, new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
+                errorResponseQueue.offer("unexpected subscribe success error");
+            }
+            public void onFailure(Throwable error) {
+                errorQueue.offer("expected failure");
+            }
+        }, executor);
+
+        assertEquals("response error", errorResponseQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("expected failure", errorQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testRestoreSession() throws Exception {

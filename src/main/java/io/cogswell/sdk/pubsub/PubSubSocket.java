@@ -656,12 +656,12 @@ public class PubSubSocket implements WebSocket.StringCallback, AsyncHttpClient.W
                             channel = new JsonObject(request).str("chan");
                         }
 
-                        errorHandler.onError(sequence, action, code, channel);
+                        errorHandler.onErrorResponse(sequence, action, code, channel);
                     }
                 }
 
                 if (code != 200 && errorResponseHandler != null) {
-                    errorResponseHandler.onError(sequence, action, code, channel);
+                    errorResponseHandler.onErrorResponse(sequence, action, code, channel);
                 }
             }
         } catch (JSONException e) {
