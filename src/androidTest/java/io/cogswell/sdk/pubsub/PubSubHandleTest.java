@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 
 import io.cogswell.sdk.pubsub.handlers.PubSubErrorResponseHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
+import io.cogswell.sdk.pubsub.handlers.PubSubRawRecordHandler;
 import io.cogswell.sdk.utils.Container;
 import io.cogswell.sdk.utils.Duration;
 
@@ -503,6 +504,90 @@ public class PubSubHandleTest extends TestCase {
 
         assertEquals("response error", errorResponseQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
         assertEquals("expected failure", errorQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
+    public void testRawRecordOnSuccess() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final BlockingQueue<String> rawRecordQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> messageQueue = new LinkedBlockingQueue<>(1);
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+            }
+        };
+
+        final PubSubRawRecordHandler rawRecordHandler = new PubSubRawRecordHandler() {
+            public void onRawRecord(String record) {
+                rawRecordQueue.offer(record);
+            }
+        };
+
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(readOnlyKeys, pubSubOptions);
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        pubsubHandle.onRawRecord(rawRecordHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe("channel of fun", messageHandler);
+                    }
+                };
+
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        Futures.addCallback(subscribeFuture, new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
+                messageQueue.offer("success");
+            }
+            public void onFailure(Throwable error) {
+                messageQueue.offer("failure");
+            }
+        }, executor);
+
+        assertNotNull(rawRecordQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("success", messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
+    public void testRawRecordOnFailure() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final BlockingQueue<String> rawRecordQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> messageQueue = new LinkedBlockingQueue<>(1);
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+            }
+        };
+
+        final PubSubRawRecordHandler rawRecordHandler = new PubSubRawRecordHandler() {
+            public void onRawRecord(String record) {
+                rawRecordQueue.offer(record);
+            }
+        };
+
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(writeOnlyKeys, pubSubOptions);
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        pubsubHandle.onRawRecord(rawRecordHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe("channel of doom", messageHandler);
+                    }
+                };
+
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        Futures.addCallback(subscribeFuture, new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
+                messageQueue.offer("success");
+            }
+            public void onFailure(Throwable error) {
+                messageQueue.offer("failure");
+            }
+        }, executor);
+
+        assertNotNull(rawRecordQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("failure", messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testRestoreSession() throws Exception {
