@@ -14,6 +14,7 @@ import org.json.JSONObject;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
@@ -27,7 +28,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import io.cogswell.sdk.pubsub.handlers.PubSubCloseHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
+import io.cogswell.sdk.pubsub.handlers.PubSubNewSessionHandler;
+import io.cogswell.sdk.pubsub.handlers.PubSubRawRecordHandler;
+import io.cogswell.sdk.pubsub.handlers.PubSubReconnectHandler;
 import io.cogswell.sdk.utils.Container;
 import io.cogswell.sdk.utils.Duration;
 
@@ -640,14 +645,12 @@ public class PubSubHandleTest extends TestCase {
 
         final PubSubMessageHandler messageHandlerChannelA = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                Log.e("[MESSAGE]", "channel:'" + record.getChannel() + "', message:'" + record.getMessage() + "'");
                 messageQueueA.offer(record);
             }
         };
 
         final PubSubMessageHandler messageHandlerChannelB = new PubSubMessageHandler() {
             public void onMessage(PubSubMessageRecord record) {
-                Log.e("[MESSAGE]", "channel:'" + record.getChannel() + "', message:'" + record.getMessage() + "'");
                 messageQueueB.offer(record);
             }
         };
@@ -782,5 +785,263 @@ public class PubSubHandleTest extends TestCase {
         assertEquals(testMessageB, recordB.getMessage());
         assertEquals(testChannelB, recordB.getChannel());
         assertEquals(messageIdB.get(), recordB.getId());
+    }
+
+    /**
+     * Test a single PubSubHandle going through all of the features in sequence.
+     */
+    public void testFullSweep() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final Container<String> failure = new Container<>();
+        final Container<UUID> oldSession = new Container<>();
+        final Container<UUID> newSession = new Container<>();
+        final Container<UUID> replacementSession = new Container<>();
+        final Container<UUID> firstMessageId = new Container<>();
+        final Container<UUID> secondMessageId = new Container<>();
+        final Container<SortedSet<String>> subscribeMainSubscriptions = new Container<>();
+        final Container<SortedSet<String>> subscribeControlSubscriptions = new Container<>();
+        final Container<SortedSet<String>> reconnectSubscriptions = new Container<>();
+        final Container<SortedSet<String>> unsubscribeMainSubscriptions = new Container<>();
+        final Container<SortedSet<String>> unsubscribeAllSubscriptions = new Container<>();
+        final Container<PubSubMessageRecord> controlMessage = new Container<>();
+
+        final BlockingQueue<String> reconnectQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> messageDeliveredQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> closeQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<PubSubMessageRecord> messageQueue = new LinkedBlockingQueue<>(1);
+
+        final String mainChannel = "new-channel-test";//"MAIN-TEST-CHANNEL-" + System.nanoTime();
+        final String controlChannel = "CONTROL-TEST-CHANNEL-" + System.nanoTime();
+        final String firstMessage = "TEST-MESSAGE-" + System.nanoTime();
+        final String secondMessage = "TEST-MESSAGE-" + System.nanoTime();
+
+        // Message handler for the main channel.
+        final PubSubMessageHandler mainChannelMessageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+                messageQueue.offer(record);
+            }
+        };
+
+        final PubSubRawRecordHandler rawRecordHandler = new PubSubRawRecordHandler() {
+            public void onRawRecord(String rawRecord) {
+                Log.e("MESSAGE_FOR_YOU_SIR::::", rawRecord);
+            }
+        };
+
+        // Message handler for the control channel (should never receive anything).
+        final PubSubMessageHandler controlChannelMessageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+                controlMessage.set(record);
+            }
+        };
+
+        // Reconnect handler.
+        final PubSubReconnectHandler reconnectHandler = new PubSubReconnectHandler() {
+            public void onReconnect() {
+                reconnectQueue.offer("reconnected");
+            }
+        };
+
+        // New session handler.
+        final PubSubNewSessionHandler newSessionHandler = new PubSubNewSessionHandler() {
+            public void onNewSession(UUID uuid) {
+                replacementSession.set(uuid);
+            }
+        };
+
+        // Socket close handler.
+        final PubSubCloseHandler closeHandler = new PubSubCloseHandler() {
+            public void onClose(Throwable error) {
+                closeQueue.offer("closed");
+            }
+        };
+
+        // Establish the initial connection.
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(keys, new PubSubOptions(host));
+
+        // Stash the handle then fetch the session UUID.
+        AsyncFunction<PubSubHandle, UUID> getSessionIdTransformer = new AsyncFunction<PubSubHandle, UUID>() {
+            @Override
+            public ListenableFuture<UUID> apply(PubSubHandle pubsubHandle) throws Exception {
+                // Stash the PubSubHandle for later user.
+                handle.set(stashHandle(pubsubHandle));
+
+                pubsubHandle.onReconnect(reconnectHandler);
+                pubsubHandle.onNewSession(newSessionHandler);
+                pubsubHandle.onRawRecord(rawRecordHandler);
+                pubsubHandle.onClose(closeHandler);
+
+                return pubsubHandle.getSessionUuid();
+            }
+        };
+
+        ListenableFuture<UUID> oldSessionIdFuture = Futures.transformAsync(connectFuture, getSessionIdTransformer);
+
+        // Record the old session UUID then subscribe to main channel.
+        AsyncFunction<UUID, List<String>> subscribeToMainTransformer = new AsyncFunction<UUID, List<String>>() {
+            public ListenableFuture<List<String>> apply(UUID sessionId) {
+                oldSession.set(sessionId);
+
+                // Subscribe to the main channel.
+                return handle.get().subscribe(mainChannel, mainChannelMessageHandler);
+            }
+        };
+
+        ListenableFuture<List<String>> mainSubscribeFuture = Futures.transformAsync(oldSessionIdFuture, subscribeToMainTransformer);
+
+        // Report the subscriptions post subscribe to main, then subscribe to the control channel.
+        AsyncFunction<List<String>, List<String>> subscribeToControlTransformer = new AsyncFunction<List<String>, List<String>>() {
+            public ListenableFuture<List<String>> apply(List<String> subscriptions) {
+                // Now subscribed to main channel.
+                subscribeMainSubscriptions.set(new TreeSet<>(subscriptions));
+
+                // Subscribe to the control channel
+                return handle.get().subscribe(controlChannel, controlChannelMessageHandler);
+            }
+        };
+
+        ListenableFuture<List<String>> controlSubscribeFuture = Futures.transformAsync(mainSubscribeFuture, subscribeToControlTransformer);
+
+        // Report the subscriptions post subscribe to control, then publish the first message.
+        AsyncFunction<List<String>, UUID> publishFirstMessageTransformer = new AsyncFunction<List<String>, UUID>() {
+            public ListenableFuture<UUID> apply(List<String> subscriptions) throws Exception {
+                // Now subscribed to control channel.
+                subscribeControlSubscriptions.set(new TreeSet<>(subscriptions));
+
+                // Publish the first message, expecting an acknowledgement.
+                return handle.get().publishWithAck(mainChannel, firstMessage);
+            }
+        };
+
+        ListenableFuture<UUID> publishFirstMessageFuture = Futures.transformAsync(controlSubscribeFuture, publishFirstMessageTransformer);
+
+        // Report the subscriptions post subscribe to control, then drop the connection.
+        FutureCallback<UUID> firstMessageConfirmationCallback = new FutureCallback<UUID>() {
+            public void onSuccess(UUID messageId) {
+                // First message was successfully delivered.
+                firstMessageId.set(messageId);
+
+                // Notify of message 1 delivery.
+                messageDeliveredQueue.offer("message-1-published");
+            }
+            public void onFailure(Throwable t) {
+                failure.set("failed-before-first-publish");
+            }
+        };
+
+        Futures.addCallback(publishFirstMessageFuture, firstMessageConfirmationCallback);
+
+        // Wait for the first message, and evaluate its contents.
+        assertEquals("message-1-published", messageDeliveredQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertNotNull(firstMessageId.get());
+
+        PubSubMessageRecord msg1Record = messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+        assertNotNull(msg1Record);
+        assertEquals(firstMessageId.get(), msg1Record.getId());
+        assertEquals(mainChannel, msg1Record.getChannel());
+        assertEquals(firstMessage, msg1Record.getMessage());
+
+        // After receiving the first message, drop the connection.
+        handle.get().dropConnection(new PubSubDropConnectionOptions(
+                Duration.of(0L, TimeUnit.MICROSECONDS)
+        ));
+
+        // Once we have reconnected (reconnectHandler), fetch the new session UUID.
+        assertEquals("reconnected", reconnectQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        ListenableFuture<UUID> newSessionIdFuture = handle.get().getSessionUuid();
+
+        // Record the new session UUID, then fetch the list of subscriptions to confirm that they were restored.
+        AsyncFunction<UUID, List<String>> fetchSubscriptionsTransformer = new AsyncFunction<UUID, List<String>>() {
+            public ListenableFuture<List<String>> apply(UUID sessionId) throws Exception {
+                // Stash the reconnect session's ID.
+                newSession.set(sessionId);
+
+                // List the channels to which we are subscribed post reconnect.
+                return handle.get().listSubscriptions();
+            }
+        };
+
+        ListenableFuture<List<String>> restoredSubscriptionsFuture = Futures.transformAsync(newSessionIdFuture, fetchSubscriptionsTransformer);
+
+        // Record the restored subscriptions, then publish the second message (with acknowledgement).
+        AsyncFunction<List<String>, UUID> publishMessageTransformer = new AsyncFunction<List<String>, UUID>() {
+            public ListenableFuture<UUID> apply(List<String> subscriptions) throws Exception {
+                // Stash the post-reconnect (restored) subscriptions.
+                reconnectSubscriptions.set(new TreeSet<>(subscriptions));
+
+                // Publish the second message, expecting an acknowledgement.
+                return handle.get().publishWithAck(mainChannel, secondMessage);
+            }
+        };
+
+        ListenableFuture<UUID> publishedMessageIdFuture = Futures.transformAsync(restoredSubscriptionsFuture, publishMessageTransformer);
+
+        FutureCallback<UUID> publishMessageCallback = new FutureCallback<UUID>() {
+            public void onSuccess(UUID messageId) {
+                // Second message was successfully delivered.
+                secondMessageId.set(messageId);
+
+                // Notify of message 2 delivery.
+                messageDeliveredQueue.offer("message-2-published");
+            }
+            public void onFailure(Throwable t) {
+                messageDeliveredQueue.offer("failed-to-publish-message");
+            }
+        };
+
+        Futures.addCallback(publishedMessageIdFuture, publishMessageCallback);
+
+        // Once the message has been published and delivered, then move on to unsubscribe operations.
+        assertEquals("message-2-published", messageDeliveredQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertNotNull(secondMessageId.get());
+
+        assertEquals(oldSession.get(), newSession.get());
+        assertEquals(new TreeSet<>(Arrays.asList(mainChannel)), subscribeMainSubscriptions.get());
+        assertEquals(new TreeSet<>(Arrays.asList(mainChannel, controlChannel)), subscribeControlSubscriptions.get());
+        assertEquals(new TreeSet<>(Arrays.asList(mainChannel, controlChannel)), reconnectSubscriptions.get());
+
+        PubSubMessageRecord msg2Record = messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS);
+
+        assertNotNull(msg2Record);
+        assertEquals(secondMessageId.get(), msg2Record.getId());
+        assertEquals(mainChannel, msg2Record.getChannel());
+        assertEquals(secondMessage, msg2Record.getMessage());
+
+        // Now unsubscribe from the main channel.
+        ListenableFuture<List<String>> unsubscribeMainFuture = handle.get().unsubscribe(mainChannel);
+
+        // After recording the subscriptions post unsubscribe from main channel, unsubscribe from all channels.
+        AsyncFunction<List<String>, List<String>> unsubscribeAllTransformer = new AsyncFunction<List<String>, List<String>>() {
+            public ListenableFuture<List<String>> apply(List<String> subscriptions) throws Exception {
+                // Stash the list of subscriptions post unsubscribe from main.
+                unsubscribeMainSubscriptions.set(new TreeSet<>(subscriptions));
+
+                // Now unsubscribe from all channels.
+                return handle.get().unsubscribeAll();
+            }
+        };
+
+        ListenableFuture<List<String>> unsubscribeAllFuture = Futures.transformAsync(unsubscribeMainFuture, unsubscribeAllTransformer);
+
+        // After recording the subscriptions post unsubscribe all, close the connection.
+        AsyncFunction<List<String>, Void> closeTransformer = new AsyncFunction<List<String>, Void>() {
+            public ListenableFuture<Void> apply(List<String> subscriptions) throws Exception {
+                // Stash the list of subscriptions post unsubscribe from all.
+                unsubscribeAllSubscriptions.set(new TreeSet<>(subscriptions));
+
+                // Now close the connection.
+                return handle.get().close();
+            }
+        };
+
+        assertEquals("closed", closeQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+
+        assertNotNull(handle.get());
+        assertNull(failure.get());
+        assertNull(controlMessage.get());
+        assertNull(replacementSession.get());
+
+        assertEquals(new TreeSet<>(Arrays.asList(controlChannel)), unsubscribeMainSubscriptions.get());
+        assertEquals(new TreeSet<>(Arrays.asList(controlChannel)), unsubscribeAllSubscriptions.get());
     }
 }
