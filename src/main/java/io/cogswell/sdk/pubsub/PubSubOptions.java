@@ -15,7 +15,7 @@ public class PubSubOptions {
     /**
      * The default url to the production server.
      */
-    private static final String PRODUCTION_URL = "wss://api.cogswell.io/pubsub";
+    private static final String PRODUCTION_URL = "https://api.cogswell.io/pubsub";
 
     /**
      * The default timeout for connections.
