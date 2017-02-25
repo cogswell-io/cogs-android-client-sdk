@@ -334,7 +334,7 @@ public class PubSubSocketTest extends TestCase {
 
         pss.sendRequest(testSeqNumber, requestJson, false, new PubSubErrorResponseHandler() {
             @Override
-            public void onError(Long sequence, String action, Integer code, String channel) {
+            public void onErrorResponse(Long sequence, String action, Integer code, String channel) {
                 JSONObject obj = new JSONObject();
                 try {
                     if (sequence != null) obj.put("seq", sequence);

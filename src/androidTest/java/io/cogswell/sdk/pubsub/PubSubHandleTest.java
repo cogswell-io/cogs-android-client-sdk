@@ -33,6 +33,7 @@ import io.cogswell.sdk.pubsub.handlers.PubSubMessageHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubNewSessionHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubRawRecordHandler;
 import io.cogswell.sdk.pubsub.handlers.PubSubReconnectHandler;
+import io.cogswell.sdk.pubsub.handlers.PubSubErrorResponseHandler;
 import io.cogswell.sdk.utils.Container;
 import io.cogswell.sdk.utils.Duration;
 
@@ -43,6 +44,8 @@ public class PubSubHandleTest extends TestCase {
 
     private LinkedList<PubSubHandle> handles = new LinkedList<>();
     private List<String> keys = new ArrayList<String>();
+    private List<String> readOnlyKeys = new ArrayList<String>();
+    private List<String> writeOnlyKeys = new ArrayList<String>();
     private String host = null;
 
     @Override
@@ -61,12 +64,14 @@ public class PubSubHandleTest extends TestCase {
 
         if (rKey != null) {
             keys.add(rKey);
+            readOnlyKeys.add(rKey);
         }
 
         String wKey = keysJson.optString("writeKey", null);
 
         if (wKey != null) {
             keys.add(wKey);
+            writeOnlyKeys.add(wKey);
         }
 
         String aKey = keysJson.optString("adminKey", null);
@@ -379,6 +384,49 @@ public class PubSubHandleTest extends TestCase {
         assertEquals(testMessage, messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS).getMessage());
     }
 
+    public void testSubscribeThenBadPublishWithAck() throws Exception {
+        final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+        final BlockingQueue<PubSubMessageRecord> messageQueue = new LinkedBlockingQueue<>();
+        final Container<PubSubHandle> handle = new Container<>();
+
+        final String testChannel = "TEST-CHANNEL";
+        final String testMessage = "TEST-MESSAGE:"+System.currentTimeMillis()+"-"+Math.random();
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+                messageQueue.offer(record);
+            }
+        };
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(readOnlyKeys, new PubSubOptions(host));
+
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        return handle.set(stashHandle(pubsubHandle)).subscribe(testChannel, messageHandler);
+                    }
+                };
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        AsyncFunction<List<String>, UUID> publishWithAckFunction =
+                new AsyncFunction<List<String>, UUID>() {
+                    public ListenableFuture<UUID> apply(List<String> subscribeResponse) {
+                        return handle.get().publishWithAck(testChannel, testMessage);
+                    }
+                };
+        ListenableFuture<UUID> publishWithAckFuture = Futures.transformAsync(subscribeFuture, publishWithAckFunction, executor);
+
+        Futures.addCallback(publishWithAckFuture, new FutureCallback<UUID>() {
+            public void onSuccess(UUID publishWithAckResponse) {
+                queue.offer(publishWithAckResponse == null ? "null-message-id-response" : "success");
+            }
+            public void onFailure(Throwable error) {
+                queue.offer("publish-with-ack-failure");
+            }
+        }, executor);
+
+        assertEquals("publish-with-ack-failure", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
     public void testClose() throws Exception {
         final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
         final Container<PubSubHandle> handle = new Container<>();
@@ -418,6 +466,132 @@ public class PubSubHandleTest extends TestCase {
         });
 
         assertEquals("success", queue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
+    public void testErrorResponse() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final BlockingQueue<String> errorResponseQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> errorQueue = new LinkedBlockingQueue<>(1);
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+            }
+        };
+
+        final PubSubErrorResponseHandler errorResponseHandler = new PubSubErrorResponseHandler() {
+            public void onErrorResponse(Long sequence, String action, Integer code, String channel) {
+                errorResponseQueue.offer("response error");
+            }
+        };
+
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(writeOnlyKeys, pubSubOptions);
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        pubsubHandle.onErrorResponse(errorResponseHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe("channel of doom", messageHandler);
+                    }
+                };
+
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        Futures.addCallback(subscribeFuture, new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
+                errorResponseQueue.offer("unexpected subscribe success error");
+            }
+            public void onFailure(Throwable error) {
+                errorQueue.offer("expected failure");
+            }
+        }, executor);
+
+        assertEquals("response error", errorResponseQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("expected failure", errorQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
+    public void testRawRecordOnSuccess() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final BlockingQueue<String> rawRecordQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> messageQueue = new LinkedBlockingQueue<>(1);
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+            }
+        };
+
+        final PubSubRawRecordHandler rawRecordHandler = new PubSubRawRecordHandler() {
+            public void onRawRecord(String record) {
+                rawRecordQueue.offer(record);
+            }
+        };
+
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(readOnlyKeys, pubSubOptions);
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        pubsubHandle.onRawRecord(rawRecordHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe("channel of fun", messageHandler);
+                    }
+                };
+
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        Futures.addCallback(subscribeFuture, new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
+                messageQueue.offer("success");
+            }
+            public void onFailure(Throwable error) {
+                messageQueue.offer("failure");
+            }
+        }, executor);
+
+        assertNotNull(rawRecordQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("success", messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+    }
+
+    public void testRawRecordOnFailure() throws Exception {
+        final Container<PubSubHandle> handle = new Container<>();
+        final BlockingQueue<String> rawRecordQueue = new LinkedBlockingQueue<>(1);
+        final BlockingQueue<String> messageQueue = new LinkedBlockingQueue<>(1);
+
+        final PubSubMessageHandler messageHandler = new PubSubMessageHandler() {
+            public void onMessage(PubSubMessageRecord record) {
+            }
+        };
+
+        final PubSubRawRecordHandler rawRecordHandler = new PubSubRawRecordHandler() {
+            public void onRawRecord(String record) {
+                rawRecordQueue.offer(record);
+            }
+        };
+
+        PubSubOptions pubSubOptions = new PubSubOptions(host, true, Duration.of(30, TimeUnit.SECONDS), null);
+
+        ListenableFuture<PubSubHandle> connectFuture = PubSubSDK.getInstance().connect(writeOnlyKeys, pubSubOptions);
+        AsyncFunction<PubSubHandle, List<String>> subscribeFunction =
+                new AsyncFunction<PubSubHandle, List<String>>() {
+                    public ListenableFuture<List<String>> apply(PubSubHandle pubsubHandle) {
+                        pubsubHandle.onRawRecord(rawRecordHandler);
+                        return handle.set(stashHandle(pubsubHandle)).subscribe("channel of doom", messageHandler);
+                    }
+                };
+
+        ListenableFuture<List<String>> subscribeFuture = Futures.transformAsync(connectFuture, subscribeFunction, executor);
+
+        Futures.addCallback(subscribeFuture, new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
+                messageQueue.offer("success");
+            }
+            public void onFailure(Throwable error) {
+                messageQueue.offer("failure");
+            }
+        }, executor);
+
+        assertNotNull(rawRecordQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
+        assertEquals("failure", messageQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
     }
 
     public void testRestoreSession() throws Exception {
