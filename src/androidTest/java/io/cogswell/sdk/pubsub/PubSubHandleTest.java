@@ -38,7 +38,7 @@ import io.cogswell.sdk.utils.Container;
 import io.cogswell.sdk.utils.Duration;
 
 public class PubSubHandleTest extends TestCase {
-    private static int asyncTimeoutSeconds = 4;
+    private static int asyncTimeoutSeconds = 5;
 
     private Executor executor = Executors.newFixedThreadPool(16);
 
@@ -1043,7 +1043,6 @@ public class PubSubHandleTest extends TestCase {
                 pubsubHandle.onReconnect(reconnectHandler);
                 pubsubHandle.onNewSession(newSessionHandler);
                 pubsubHandle.onRawRecord(rawRecordHandler);
-                pubsubHandle.onClose(closeHandler);
 
                 return pubsubHandle.getSessionUuid();
             }
@@ -1198,15 +1197,29 @@ public class PubSubHandleTest extends TestCase {
         ListenableFuture<List<String>> unsubscribeAllFuture = Futures.transformAsync(unsubscribeMainFuture, unsubscribeAllTransformer);
 
         // After recording the subscriptions post unsubscribe all, close the connection.
-        AsyncFunction<List<String>, Void> closeTransformer = new AsyncFunction<List<String>, Void>() {
-            public ListenableFuture<Void> apply(List<String> subscriptions) throws Exception {
+        FutureCallback<List<String>> closeHandleCallback = new FutureCallback<List<String>>() {
+            public void onSuccess(List<String> subscriptions) {
                 // Stash the list of subscriptions post unsubscribe from all.
                 unsubscribeAllSubscriptions.set(new TreeSet<>(subscriptions));
 
+                // We have to register the close handler here instead of when the
+                // connection is first established, otherwise it will be invoked
+                // back on the dropConnection() call.
+                handle.get().onClose(closeHandler);
+
                 // Now close the connection.
-                return handle.get().close();
+                handle.get().close();
+            }
+            public void onFailure(Throwable t) {
+                // Record failure.
+                failure.set("failure-wrapping-up");
+
+                // Wrap up anyway.
+                handle.get().close();
             }
         };
+
+        Futures.addCallback(unsubscribeAllFuture, closeHandleCallback);
 
         assertEquals("closed", closeQueue.poll(asyncTimeoutSeconds, TimeUnit.SECONDS));
 
