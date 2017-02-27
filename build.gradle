@@ -20,7 +20,7 @@ apply plugin: 'maven'
 //apply plugin: 'maven-publish'
 
 // This is the version of this library used when deploying the artifact to jcenter
-version = '1.0.28'
+version = '2.0.0'
 group = 'io.cogswell'
 def siteUrl = 'https://cogswell.io/'
 def gitUrl = 'https://github.com/cogswell-io/cogs-android-client-sdk'
