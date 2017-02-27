@@ -177,7 +177,7 @@ task wrapper(type: Wrapper) {
 }
 
 artifacts {
-  //archives javadocJar
+  archives javadocJar
   archives sourcesJar
 }
 
