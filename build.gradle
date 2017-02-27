@@ -167,10 +167,10 @@ task javadoc(type: Javadoc) {
   failOnError false
 }
 
-/*task javadocJar(type: Jar, dependsOn: javadoc) {
+task javadocJar(type: Jar, dependsOn: javadoc) {
   classifier = 'javadoc'
   from javadoc.destinationDir
-}*/
+}
 
 task wrapper(type: Wrapper) {
   gradleVersion = '2.12'
