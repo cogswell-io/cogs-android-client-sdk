@@ -164,19 +164,20 @@ task sourcesJar(type: Jar) {
 task javadoc(type: Javadoc) {
   source = android.sourceSets.main.java.srcDirs
   classpath += project.files(android.getBootClasspath().join(File.pathSeparator))
+  failOnError false
 }
 
-task javadocJar(type: Jar, dependsOn: javadoc) {
+/*task javadocJar(type: Jar, dependsOn: javadoc) {
   classifier = 'javadoc'
   from javadoc.destinationDir
-}
+}*/
 
 task wrapper(type: Wrapper) {
   gradleVersion = '2.12'
 }
 
 artifacts {
-  archives javadocJar
+  //archives javadocJar
   archives sourcesJar
 }
 
